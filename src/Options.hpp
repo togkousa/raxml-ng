@@ -59,6 +59,7 @@ public:
   bool use_rba_partload;
   bool use_energy_monitor;
   bool use_old_constraint;
+  bool use_spr_fastclv;
 
   bool optimize_model;
   bool optimize_brlen;
@@ -79,7 +80,6 @@ public:
   double lh_epsilon;
   int spr_radius;
   double spr_cutoff;
-  bool spr_optimized;
   int brlen_linkage;
   int brlen_opt_method;
   double brlen_min;
@@ -88,6 +88,9 @@ public:
 
   double nni_tolerance;
   double nni_epsilon;
+
+  double msa_error_rate;
+  std::string msa_error_file;
 
   unsigned int num_searches;
   unsigned long long terrace_maxsize;

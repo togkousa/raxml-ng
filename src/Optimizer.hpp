@@ -20,21 +20,28 @@ public:
   double evaluate(TreeInfo& treeinfo, CheckpointManager& cm);
   void nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& loglh);
 
+  std::string _msa_error_file;
+
 private:
   double _lh_epsilon;
   int _spr_radius;
   double _spr_cutoff;
-  bool _optimized_spr;
 
   // nni params
   double _nni_epsilon;
   double _nni_tolerance;
+
+  // msa error-rate
+  double _msa_error_rate;
+  unsigned int _seed;
 
   // functions for adaptive mode
   double convergence_rate(CheckpointManager& cm, double test_loglh);
   bool first_search_done(CheckpointManager& cm);
   bool converged(CheckpointManager& cm, double test_loglh, double epsilon);
   int adaptive_slow_spr_radius(double difficulty);
+  
+
 };
 
 #endif /* RAXML_OPTIMIZER_H_ */

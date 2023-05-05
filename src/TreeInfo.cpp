@@ -30,7 +30,8 @@ void TreeInfo::init(const Options &opts, const Tree& tree, const PartitionedMSA&
   _brlen_opt_method = opts.brlen_opt_method;
   _check_lh_impr = opts.safety_checks.isset(SafetyCheck::model_lh_impr);
   _use_old_constraint = opts.use_old_constraint;
-
+  _use_spr_fastclv = opts.use_spr_fastclv;
+  
   _partition_contributions.resize(parted_msa.part_count());
   double total_weight = 0;
 
@@ -390,7 +391,8 @@ double TreeInfo::spr_round(spr_round_params& params)
                                _brlen_min, _brlen_max, RAXML_BRLEN_SMOOTHINGS,
                                0.1,
                                params.subtree_cutoff > 0. ? &params.cutoff_info : nullptr,
-                               params.subtree_cutoff, params.optimized);
+                               params.subtree_cutoff,
+                               _use_spr_fastclv);
 
   libpll_check_error("ERROR in SPR round");
 
@@ -694,82 +696,3 @@ corax_partition_t* create_pll_partition(const Options& opts, const PartitionInfo
 
   return partition;
 }
-
-
-/* 
-int TreeInfo::savePartition(const char* filename, int partIndex){
-    
-  int retval = CORAX_SUCCESS;
-  char *file = new char[strlen(filename)+1];
-  strcat(file,filename);
-
-  FILE * bin_file;
-  corax_binary_header_t bin_header;
-  const char * bin_fname = file;
-
-  bin_file = corax_binary_create(bin_fname, &bin_header, CORAX_BIN_ACCESS_SEQUENTIAL, 0);
-
-  if(!bin_file){
-      std::cout << "Error. Couldn't create bin file. Exit." << std::endl;
-      return CORAX_FAILURE;
-  }
-
-  if(!corax_binary_partition_dump(bin_file,
-                              BLOCK_ID_PARTITION,
-                              pll_treeinfo().partitions[partIndex],
-                              CORAX_BIN_ATTRIB_PARTITION_DUMP_CLV |
-                              CORAX_BIN_ATTRIB_PARTITION_DUMP_WGT))
-  {
-      std::cout << "Error. Couldn't dump partition. Exit" << std::endl;
-      return CORAX_FAILURE;
-  }
-
-  corax_binary_close(bin_file);
-  delete[] file;
-
-  return retval;
-
-}
-
-corax_partition_t* TreeInfo::loadPartition(const char* bin_fname){
-
-  corax_partition_t* _partition;
-  corax_binary_header_t input_header;
-  unsigned int bin_attributes = 0;
-  corax_block_map_t * block_map;
-  unsigned int n_blocks;
-
-  FILE * bin_file;
-
-  bin_file = corax_binary_open(bin_fname, &input_header);
-
-  block_map = corax_binary_get_map(bin_file, &n_blocks);
-
-  //printf("There are %d blocks in the map\n", n_blocks);
-  int partition_offset = 0;
-  for (unsigned int i=0; i<n_blocks; ++i)
-  {
-    // we cannot print the offset for the test since PATTERN_TIP
-    // affects the size of the CLVs
-    
-    //printf("%5ld\n", block_map[i].block_id);
-    
-    // printf("%5ld %20ld\n", block_map[i].block_id, block_map[i].block_offset);
-    //
-    if (block_map[i].block_id == BLOCK_ID_PARTITION)
-    {
-      partition_offset = block_map[i].block_offset;
-    }
-  }
-
-  // For the offset we can use the actual offset (from the block_map),
-  //   or CORAX_BIN_ACCESS_SEEK 
-  _partition = corax_binary_partition_load(bin_file,
-                                        BLOCK_ID_PARTITION,
-                                        NULL, // in order to create a new partition
-                                        &bin_attributes,
-                                        partition_offset);
-
-  //cout << "Done inside" << endl;
-  return _partition;
-} */

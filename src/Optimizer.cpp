@@ -1,11 +1,16 @@
 #include "Optimizer.hpp"
 #include "topology/RFDistCalculator.hpp"
+#include "adaptive/MSAErrorHandler.hpp"
+#include <memory>
 
+/* 
+#include <thread>         // std::thread
+#include <mutex>          // std::mutex
+ */
 using namespace std;
 
 Optimizer::Optimizer (const Options &opts) :
-    _lh_epsilon(opts.lh_epsilon), _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
-    _optimized_spr(opts.spr_optimized), _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance)
+    _lh_epsilon(opts.lh_epsilon), _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), _msa_error_rate(opts.msa_error_rate), _seed(opts.random_seed)
 {
 }
 
@@ -61,8 +66,17 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   double &loglh = search_state.loglh;
   int& iter = search_state.iteration;
   spr_round_params& spr_params = search_state.spr_params;
-  spr_params.optimized = _optimized_spr;
   int& best_fast_radius = search_state.fast_spr_radius;
+  
+  // msa-error-rate configuration
+  std::shared_ptr<MSAErrorHandler> msa_error_handler;
+
+  if(_msa_error_rate){
+    msa_error_handler = make_shared<MSAErrorHandler>(&treeinfo.pll_treeinfo(),
+                                                      _msa_error_rate,
+                                                      _seed,
+                                                      _msa_error_file);
+  }
 
   CheckpointStep resume_step = search_state.step;
 
@@ -170,6 +184,15 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     spr_params.reset_cutoff_info(loglh);
   }
 
+  
+  // here
+  //getchar();
+  
+  if(_msa_error_rate){
+    unsigned int dist_size = 1000;
+    double *dist = msa_error_handler->generate_delta_loglh_dist(treeinfo, dist_size, loglh);
+  }
+
   double old_loglh;
 
   if (do_step(CheckpointStep::fastSPR))
@@ -255,7 +278,6 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
   // nni_params.tolerance
   const double fast_modopt_eps = 10.;
   const double interim_modopt_eps = 3.;
-  _optimized_spr = true;
 
   // to store all the intermediate trees
   TreeList intermediate_trees;
