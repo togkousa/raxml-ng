@@ -424,6 +424,8 @@ std::ostream& operator<<(std::ostream& stream, const Options& opts)
         stream << "  spr subtree cutoff: " << opts.spr_cutoff << endl;
       else
         stream << "  spr subtree cutoff: OFF" << endl;
+      
+      stream << "  fast CLV updates: " << (opts.use_spr_fastclv ? "ON" : "OFF") << endl;
     }
 
     stream << "  branch lengths: ";

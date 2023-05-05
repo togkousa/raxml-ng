@@ -2730,6 +2730,8 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
 
     auto log_level = instance.start_trees.size() > 1 ? LogLevel::result : LogLevel::info;
     Optimizer optimizer(opts);
+    if(opts.msa_error_rate) optimizer._msa_error_file = opts.msa_error_file;
+
     if (opts.command == Command::evaluate || opts.command == Command::sitelh ||
         opts.command == Command::ancestral)
     { 
