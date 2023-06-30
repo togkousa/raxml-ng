@@ -17,6 +17,8 @@ struct spr_round_params
   int ntopol_keep;
   double subtree_cutoff;
   cutoff_info_t cutoff_info;
+  double lh_epsilon_brlen_full;
+  double lh_epsilon_brlen_triplet;
 
   void reset_cutoff_info(double loglh)
   {
@@ -24,6 +26,9 @@ struct spr_round_params
     cutoff_info.lh_dec_sum = 0.;
     cutoff_info.lh_cutoff = loglh / -1000.0;
   }
+
+  int spr_topologies;
+  const char* spr_file;
 };
 
 struct nni_round_params
@@ -45,6 +50,7 @@ public:
   ~TreeInfo ();
 
   const corax_treeinfo_t& pll_treeinfo() const { return *_pll_treeinfo; }
+  corax_treeinfo_t& pll_treeinfo_unconst() const { return *_pll_treeinfo; }
   const corax_unode_t& pll_utree_root() const { assert(_pll_treeinfo); return *_pll_treeinfo->root; }
 
   Tree tree() const;
@@ -60,6 +66,7 @@ public:
 
   void set_topology_constraint(const Tree& cons_tree);
 
+  bool kh_test(){return _kh_test;};
   double loglh(bool incremental = false);
   double persite_loglh(std::vector<double*> part_site_lh, bool incremental = false);
   double optimize_params(int params_to_optimize, double lh_epsilon);
@@ -86,6 +93,7 @@ private:
   bool _check_lh_impr;
   bool _use_old_constraint;
   bool _use_spr_fastclv;
+  bool _kh_test;
   doubleVector _partition_contributions;
 
   void init(const Options &opts, const Tree& tree, const PartitionedMSA& parted_msa,

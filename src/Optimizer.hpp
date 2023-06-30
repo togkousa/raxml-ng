@@ -21,9 +21,11 @@ public:
   void nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& loglh);
 
   std::string _msa_error_file;
+  std::string _spr_file;
 
 private:
   double _lh_epsilon;
+  double _lh_epsilon_brlen_triplet;
   int _spr_radius;
   double _spr_cutoff;
 

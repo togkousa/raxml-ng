@@ -34,6 +34,14 @@ class MSAErrorHandler{
         std::vector<int*> *mutations_info;
         std::vector<double*> *original_clvs;
         double* delta_loglh_dist;
+        double* new_loglh_dist;
+        double* errors;
+        double epsilon;
+
+        double** tmp_brlens;
+        double** original_brlens; 
+
+        double max_loglh;
 
         std::string outfile;
 
@@ -53,6 +61,8 @@ class MSAErrorHandler{
 
         void write_dist_to_file();
 
+
+        void store_brlens_partition(corax_treeinfo_t* treeinfo, unsigned int partition_id, bool preultimate);
 
 
     public:
@@ -75,7 +85,13 @@ class MSAErrorHandler{
                                 unsigned int sites);
 
 
-        double* generate_delta_loglh_dist(TreeInfo& treeinfo, unsigned int _dist_size, double init_loglh);
+        void store_brlens(corax_treeinfo_t* treeinfo, bool preultimate = true);
+
+        void set_brlens(corax_treeinfo_t* treeinfo, bool preultimate = true);
+
+        void msa_error_dist(TreeInfo& treeinfo, unsigned int _dist_size, double init_loglh);
+
+        double get_max_loglh(){ return max_loglh;}
 
 };
 

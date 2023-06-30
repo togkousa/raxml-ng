@@ -78,6 +78,7 @@ public:
   long random_seed;
   StartingTreeMap start_trees;
   double lh_epsilon;
+  double lh_epsilon_brlen_triplet;
   int spr_radius;
   double spr_cutoff;
   int brlen_linkage;
@@ -91,6 +92,8 @@ public:
 
   double msa_error_rate;
   std::string msa_error_file;
+  std::string spr_file;
+  bool kh_test;
 
   unsigned int num_searches;
   unsigned long long terrace_maxsize;

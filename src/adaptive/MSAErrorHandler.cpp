@@ -13,6 +13,7 @@ MSAErrorHandler::MSAErrorHandler(const corax_treeinfo_t* treeinfo,
     partition_count = treeinfo->partition_count;
     
     mutations = 0;
+    max_loglh = 0;
 
     n_rates = new unsigned int[partition_count];
     n_states = new unsigned int[partition_count];
@@ -30,21 +31,36 @@ MSAErrorHandler::MSAErrorHandler(const corax_treeinfo_t* treeinfo,
     mutations_info = new std::vector<int *>;
     original_clvs = new std::vector<double *>;
 
+    tmp_brlens = new double*[partition_count];
+    original_brlens = new double*[partition_count];
+
     init_random_seed();
 
+    epsilon = 0;
     outfile = _outfile;
 }
 
 MSAErrorHandler::~MSAErrorHandler(){
 
     clear_vectors();
-
     delete[] n_rates;
     delete[] n_states;
     delete[] n_states_padded;
     delete[] n_sites;
 
     if(delta_loglh_dist) delete[] delta_loglh_dist;
+    if(new_loglh_dist) delete[] new_loglh_dist;
+    if(errors) delete[] errors;
+
+    if(max_loglh){
+        for(unsigned int p = 0; p<partition_count; p++){
+            delete[] tmp_brlens[p];
+            delete[] original_brlens[p];
+        }
+    }
+    
+    delete[] tmp_brlens;
+    delete[] original_brlens;
 }
 
 void MSAErrorHandler::clear_vectors(){
@@ -86,8 +102,9 @@ void MSAErrorHandler::set_partition_info(unsigned int part_index,
 }
 
 void MSAErrorHandler::init_random_seed(){
-    if(ParallelContext::group_master_thread()) srand(seed);
-    ParallelContext::barrier();
+    /* if(ParallelContext::group_master_thread()) srand(seed);
+    ParallelContext::barrier(); */
+    srand(seed);
 }
 
 void MSAErrorHandler::apply_single_mutation(double *clv,
@@ -248,7 +265,6 @@ void MSAErrorHandler::reverse_mutations(const corax_treeinfo_t* treeinfo){
     assert(mutations == mutations_info->size());
 
     for (unsigned int i = 0; i < mutations_info->size(); i++){
-        
         int p = mutations_info->at(i)[0];
         int clv_index = mutations_info->at(i)[1];
         int s = mutations_info->at(i)[2];
@@ -275,17 +291,20 @@ void MSAErrorHandler::reverse_mutations(const corax_treeinfo_t* treeinfo){
 
 }
 
-double* MSAErrorHandler::generate_delta_loglh_dist(TreeInfo& treeinfo, 
-                                                    unsigned int _dist_size, 
-                                                    double init_loglh)
+void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo, 
+                                            unsigned int _dist_size, 
+                                            double init_loglh)
 {
     
     double new_loglh;
     dist_size = _dist_size;
+    unsigned int errors_size = 10*dist_size;
 
     // if(delta_loglh_dist) delete[] delta_loglh_dist;
 
     delta_loglh_dist = new double[dist_size];
+    new_loglh_dist = new double[dist_size];
+    errors = new double[10*dist_size];
 
     for (unsigned int experiment = 0; experiment < dist_size; experiment++){
         
@@ -297,9 +316,10 @@ double* MSAErrorHandler::generate_delta_loglh_dist(TreeInfo& treeinfo,
         
         double delta_loglh = new_loglh - init_loglh;
         delta_loglh_dist[experiment] = delta_loglh;
-        
+        new_loglh_dist[experiment] = new_loglh;
+
         // if(ParallelContext::group_master_thread())
-        // cout << "Experiment = " << experiment <<", Mutations = " << mutations <<", Delta loglh = " << delta_loglh << endl;
+        // cout << "Experiment = " << experiment <<", Mutations = " << mutations <<", New loglh = " << delta_loglh << endl;
         
         //getchar();
 
@@ -309,17 +329,39 @@ double* MSAErrorHandler::generate_delta_loglh_dist(TreeInfo& treeinfo,
         
         //ParallelContext::barrier();
         new_loglh = treeinfo.loglh();
-        assert(init_loglh == new_loglh);
+        assert(fabs(init_loglh - new_loglh)<1e-4);
         
     }
 
     assert(delta_loglh_dist != nullptr);
     
     // if(ParallelContext::group_master_thread())
-    write_dist_to_file();
-    //ParallelContext::global_barrier();
+    
+    std::sort(delta_loglh_dist, delta_loglh_dist + dist_size);
 
-    return delta_loglh_dist;
+    max_loglh = init_loglh + delta_loglh_dist[dist_size - 1];
+
+    // cout << "Ln-1 " << init_loglh << " and max_loglh " << max_loglh << endl;
+
+    write_dist_to_file();
+    
+    // ParallelContext::global_barrier();
+    
+    /* for (unsigned int rep = 0; rep < errors_size; rep++){
+
+        unsigned int index_1 = 0, index_2 = 0;
+        
+        while(index_1 == index_2){
+            index_1 = rand() % dist_size;
+            index_2 = rand() % dist_size;
+        }
+
+        errors[rep] = delta_loglh_dist[index_1] - delta_loglh_dist[index_2]; 
+    } */
+
+    //int epsilon_index = (int) (0.95*errors_size);
+    //epsilon = errors[epsilon_index];
+    return;
 
 }
 
@@ -332,8 +374,45 @@ void MSAErrorHandler::write_dist_to_file(){
     if (myfile.is_open())
     {
         for(unsigned int count = 0; count < dist_size; count ++){
-            myfile << delta_loglh_dist[count] << "\n" ;
+            myfile << new_loglh_dist[count] << "\n" ;
         }
         myfile.close();
     }
 }
+
+
+
+void MSAErrorHandler::store_brlens(corax_treeinfo_t* treeinfo, bool preultimate){
+
+    for(unsigned int p = 0; p<partition_count; p++)
+        store_brlens_partition(treeinfo, p, preultimate);
+
+}
+
+
+void MSAErrorHandler::store_brlens_partition(corax_treeinfo_t* treeinfo, unsigned int partition_id, bool preultimate){
+
+    // cout << "Store with preultimate " << preultimate << endl;
+
+    double **store_matrix = preultimate ? tmp_brlens : original_brlens;
+    corax_partition_t* partition = treeinfo->partitions[partition_id];
+
+    unsigned int num_branches = 2*treeinfo->tip_count - 3;
+    store_matrix[partition_id] = new double[num_branches];
+
+    memcpy(store_matrix[partition_id], treeinfo->branch_lengths[partition_id], num_branches*sizeof(double));
+
+}
+
+void MSAErrorHandler::set_brlens(corax_treeinfo_t* treeinfo, bool preultimate){
+
+    if(preultimate) store_brlens(treeinfo, false);
+
+    double **copy_pmatrx = preultimate ? tmp_brlens : original_brlens;
+
+    unsigned int num_branches = 2*treeinfo->tip_count - 3;
+
+    for(unsigned int p = 0; p < partition_count; p++){
+        memcpy(treeinfo->branch_lengths[p], copy_pmatrx[p], num_branches*sizeof(double));
+    }
+} 

@@ -31,7 +31,8 @@ void TreeInfo::init(const Options &opts, const Tree& tree, const PartitionedMSA&
   _check_lh_impr = opts.safety_checks.isset(SafetyCheck::model_lh_impr);
   _use_old_constraint = opts.use_old_constraint;
   _use_spr_fastclv = opts.use_spr_fastclv;
-  
+  _kh_test = opts.kh_test;
+
   _partition_contributions.resize(parted_msa.part_count());
   double total_weight = 0;
 
@@ -389,10 +390,13 @@ double TreeInfo::spr_round(spr_round_params& params)
   double loglh = corax_algo_spr_round(_pll_treeinfo, params.radius_min, params.radius_max,
                                params.ntopol_keep, params.thorough, _brlen_opt_method,
                                _brlen_min, _brlen_max, RAXML_BRLEN_SMOOTHINGS,
-                               0.1,
+                               params.lh_epsilon_brlen_full,
                                params.subtree_cutoff > 0. ? &params.cutoff_info : nullptr,
                                params.subtree_cutoff,
-                               _use_spr_fastclv);
+                               params.lh_epsilon_brlen_triplet,
+                               _use_spr_fastclv,
+                               params.spr_file,
+                               params.spr_topologies == 0 ? &params.spr_topologies : nullptr);
 
   libpll_check_error("ERROR in SPR round");
 
