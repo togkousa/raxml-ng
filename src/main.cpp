@@ -2781,6 +2781,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
   Checkpoint& checkp = cm.checkpoint();
   auto const& master_msa = *instance.parted_msa;
   auto const& opts = instance.opts;
+  auto& master_msa_unconst = *instance.parted_msa;
 
   unique_ptr<TreeInfo> treeinfo;
 
@@ -2858,7 +2859,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
         LOG_INFO_TS << "Tree #" << start_tree_num <<
             ", initial LogLikelihood: " << FMT_LH(treeinfo->loglh()) << endl;
         LOG_PROGR << endl;
-        optimizer.evaluate(*treeinfo, cm);
+        optimizer.evaluate(*treeinfo, cm, master_msa_unconst);
       }
       else
       {
@@ -2866,7 +2867,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
         if (ParallelContext::master_thread())
           cm.search_state().loglh = loglh;
 
-        cm.update_and_write(*treeinfo);
+        cm.update_and_write(*treeinfo, master_msa_unconst);
       }
 
       LOG_PROGR << endl;
@@ -2877,7 +2878,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
     else
     {
       if(opts.command == Command::adaptive){
-        optimizer.optimize_topology_adaptive(*treeinfo, cm, dPred->getDifficulty());
+        optimizer.optimize_topology_adaptive(*treeinfo, cm, master_msa_unconst, dPred->getDifficulty());
         LOG_PROGR << endl;
         LOG_WORKER_TS(log_level) << "ML tree search #" << start_tree_num <<
                             ", logLikelihood: " << FMT_LH(checkp.loglh()) << endl;
@@ -2890,7 +2891,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
         } */
       
       } else{
-        optimizer.optimize_topology(*treeinfo, cm);
+        optimizer.optimize_topology(*treeinfo, cm, master_msa_unconst);
         LOG_PROGR << endl;
         LOG_WORKER_TS(log_level) << "ML tree search #" << start_tree_num <<
                             ", logLikelihood: " << FMT_LH(checkp.loglh()) << endl;
@@ -2930,6 +2931,7 @@ void thread_infer_bootstrap(RaxmlInstance& instance, CheckpointManager& cm)
 {
   auto const& opts = instance.opts;
   auto const& master_msa = *instance.parted_msa;
+  auto& master_msa_unconst = *instance.parted_msa;
   auto& worker = instance.get_worker();
   Checkpoint& checkp = cm.checkpoint();
 
@@ -3034,7 +3036,7 @@ void thread_infer_bootstrap(RaxmlInstance& instance, CheckpointManager& cm)
     treeinfo->set_topology_constraint(instance.constraint_tree);
 
     Optimizer optimizer(opts);
-    optimizer.optimize_topology(*treeinfo, cm);
+    optimizer.optimize_topology(*treeinfo, cm, master_msa_unconst);
 
     LOG_PROGR << endl;
     LOG_WORKER_TS(LogLevel::info) << "Bootstrap tree #" << *bs_num <<
@@ -3268,7 +3270,6 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
 
     if (!instance.ml_tree.models.empty())
     {
-      // both in standard and adaptive mode, the code enters this if clause
       const auto& ml_models = instance.ml_tree.models;
       assert(ml_models.size() == parted_msa.part_count());
       for (size_t p = 0; p < parted_msa.part_count(); ++p)
