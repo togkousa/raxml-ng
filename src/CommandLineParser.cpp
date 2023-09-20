@@ -85,7 +85,7 @@ static struct option long_options[] =
   {"nni-tolerance",      required_argument, 0, 0 },  /*  61 */
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
   {"msa-error-rate",     required_argument, 0, 0 },  /*  63 */
-  {"msa-error-file",     required_argument, 0, 0 },  /*  64 */
+  {"msa-error-file-pre", required_argument, 0, 0 },  /*  64 */
   {"spr-file",           required_argument, 0, 0 },  /*  65 */
   { 0, 0, 0, 0 }
 };

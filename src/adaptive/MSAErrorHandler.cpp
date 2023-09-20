@@ -37,7 +37,8 @@ MSAErrorHandler::MSAErrorHandler(const corax_treeinfo_t* treeinfo,
     init_random_seed();
 
     epsilon = 0;
-    outfile = _outfile;
+    outfile_initial = _outfile.length() > 0 ? _outfile + "_initial.csv" : "" ;
+    outfile_final = _outfile.length() > 0 ? _outfile + "_final.csv" : "" ;
 }
 
 MSAErrorHandler::~MSAErrorHandler(){
@@ -292,8 +293,9 @@ void MSAErrorHandler::reverse_mutations(const corax_treeinfo_t* treeinfo){
 }
 
 void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo, 
-                                            unsigned int _dist_size, 
-                                            double init_loglh)
+                                    unsigned int _dist_size, 
+                                    double init_loglh,
+                                    bool initial)
 {
     
     double new_loglh;
@@ -318,6 +320,8 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
         delta_loglh_dist[experiment] = delta_loglh;
         new_loglh_dist[experiment] = new_loglh;
 
+        epsilon += delta_loglh / dist_size;
+
         // if(ParallelContext::group_master_thread())
         // cout << "Experiment = " << experiment <<", Mutations = " << mutations <<", New loglh = " << delta_loglh << endl;
         
@@ -335,15 +339,15 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
 
     assert(delta_loglh_dist != nullptr);
     
+    if(outfile_initial.length() > 0) 
+        write_dist_to_file(initial ? outfile_initial : outfile_final);
+    
     // if(ParallelContext::group_master_thread())
     
-    std::sort(delta_loglh_dist, delta_loglh_dist + dist_size);
-
-    max_loglh = init_loglh + delta_loglh_dist[dist_size - 1];
-
+    //std::sort(delta_loglh_dist, delta_loglh_dist + dist_size);
+    //max_loglh = init_loglh + delta_loglh_dist[dist_size - 1];
     // cout << "Ln-1 " << init_loglh << " and max_loglh " << max_loglh << endl;
 
-    write_dist_to_file();
     
     // ParallelContext::global_barrier();
     
@@ -360,12 +364,12 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
     } */
 
     //int epsilon_index = (int) (0.95*errors_size);
-    //epsilon = errors[epsilon_index];
+    //epsilon = fabs(epsilon);
+    
     return;
-
 }
 
-void MSAErrorHandler::write_dist_to_file(){
+void MSAErrorHandler::write_dist_to_file(std::string outfile){
 
     const char* filename = outfile.c_str();
     remove(filename);
@@ -374,7 +378,7 @@ void MSAErrorHandler::write_dist_to_file(){
     if (myfile.is_open())
     {
         for(unsigned int count = 0; count < dist_size; count ++){
-            myfile << new_loglh_dist[count] << "\n" ;
+            myfile << delta_loglh_dist[count] << "\n" ;
         }
         myfile.close();
     }

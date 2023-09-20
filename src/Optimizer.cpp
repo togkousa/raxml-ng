@@ -79,8 +79,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   // msa-error-rate configuration
   std::shared_ptr<MSAErrorHandler> msa_error_handler;
-  //std::shared_ptr<KHtester> kh_tester;
-  //double **lnl_1, **lnl_2;
 
   if(_msa_error_rate){
 
@@ -89,16 +87,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
                                                       _msa_error_rate,
                                                       _seed,
                                                       _msa_error_file);
-  } 
-  
-  /*   
-  else if (treeinfo.kh_test()){
-
-    assert(_msa_error_rate == 0);
-    kh_tester = make_shared<KHtester>(&treeinfo.pll_treeinfo(), _seed, lnl_1, lnl_2);
-
   }
- */
 
   CheckpointStep resume_step = search_state.step;
 
@@ -134,11 +123,14 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     iter = 0;
   }
 
+  // Do it once here !!!
+  unsigned int dist_size = 1000;
+  if(_msa_error_rate)
+    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, true);
+  
   // do SPRs
   const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
   const int radius_step = 5;
-
-//  treeinfo->counter = 0;
 
   if (_spr_radius > 0)
     best_fast_radius = _spr_radius;
@@ -206,27 +198,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     spr_params.reset_cutoff_info(loglh);
   }
 
-  
-  // here
-  //getchar();
-  /* 
-  
-  if(_msa_error_rate){
-    
-    assert(treeinfo.kh_test() == false);
-
-    _new_lh_epsilon = msa_error_handler->msa_error_epsilon(treeinfo, dist_size, loglh);
-  
-  } 
-  else if (treeinfo.kh_test()){
-    
-    assert(_msa_error_rate == 0);
-    
-    //corax_treeinfo_compute_loglh_persite(&treeinfo.pll_treeinfo(), 1, 0,  lnl_1);
-    //treeinfo.persite_loglh(lnl_1, true);
-  }
- */
-
   double old_loglh;
 
   if (do_step(CheckpointStep::fastSPR))
@@ -244,15 +215,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       /* optimize ALL branches */
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
 
-      /* if(iter == 1){ 
-
-        spr_params.spr_file = NULL;
-        
-        if( _msa_error_rate){
-          _new_lh_epsilon = msa_error_handler->msa_error_epsilon(treeinfo, dist_size, loglh);
-          // cout << "New epsilon " << _new_lh_epsilon << endl;
-        }
-      } */
     }
     while (loglh - old_loglh > _lh_epsilon);
   }
@@ -272,7 +234,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   spr_params.spr_file = nullptr;
   corax_utree_t *preulitameTree = nullptr;  
-  unsigned int dist_size = 0;
   double preultimate_loglh;
   
   if (do_step(CheckpointStep::slowSPR))
@@ -283,7 +244,9 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       ++iter;
       old_loglh = loglh;
       
-      if(spr_params.radius_max + 1 >= radius_limit && _msa_error_rate){
+
+      if(false && spr_params.radius_max + 1 >= radius_limit && _msa_error_rate){
+        
         preultimate_loglh = loglh;
         spr_params.spr_file = _spr_file.c_str();
         remove(spr_params.spr_file);
@@ -306,7 +269,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
       
        
-      if(spr_params.radius_max + 1 >= radius_limit  && _msa_error_rate){
+      if(false && spr_params.radius_max + 1 >= radius_limit  && _msa_error_rate){
         dist_size = spr_params.spr_topologies;
         spr_params.spr_topologies = -1;
         spr_params.spr_file = NULL;
@@ -335,7 +298,8 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     }
     while (spr_params.radius_min >= 0 && spr_params.radius_min < radius_limit);
   }
-  
+
+  /* 
   double delta_loglh = loglh - old_loglh;
   int passed = 0, failed = 0;
   int experiment_times = 5;
@@ -384,7 +348,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   }
 
   cout << "Passed " << passed << ", failed " << failed << endl;
-  
+ */  
   /* Final thorough model optimization */
   if (do_step(CheckpointStep::modOpt4))
   {
@@ -395,14 +359,12 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::finish))
     cm.update_and_write(treeinfo);
-  
-  /* 
-  if (treeinfo.kh_test()){
-    kh_tester->delete_persite_lnl_pointers(lnl_1, lnl_2);
-  } 
-  */
+
   if(preulitameTree) corax_utree_destroy(preulitameTree, NULL);
-     
+
+  if(_msa_error_rate)
+    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false);
+
   return loglh;
 }
 
