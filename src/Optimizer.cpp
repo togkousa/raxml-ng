@@ -150,9 +150,12 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       }
 
       double best_loglh = loglh;
+      double epsilon;
 
       while (spr_params.radius_min < radius_limit)
       {
+        epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : 0.1 ;
+
         cm.update_and_write(treeinfo);
 
         ++iter;
@@ -160,7 +163,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
             spr_params.radius_max << ")" << endl;
         loglh = treeinfo.spr_round(spr_params);
 
-        if (loglh - best_loglh > 0.1)
+        if (loglh - best_loglh > epsilon)
         {
           /* LH improved, try to increase the radius */
           best_fast_radius = spr_params.radius_max;
@@ -202,8 +205,11 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::fastSPR))
   {
+    double epsilon;
     do
-    {
+    { 
+      epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : _lh_epsilon ;
+      
       cm.update_and_write(treeinfo);
       ++iter;
 
@@ -216,7 +222,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
 
     }
-    while (loglh - old_loglh > _lh_epsilon);
+    while (loglh - old_loglh > epsilon);
   }
 
   if (do_step(CheckpointStep::modOpt3))
@@ -236,10 +242,15 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   corax_utree_t *preulitameTree = nullptr;  
   double preultimate_loglh;
   
+  
   if (do_step(CheckpointStep::slowSPR))
   {
+    double epsilon;
+
     do
     {
+      epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : _lh_epsilon ;
+
       cm.update_and_write(treeinfo);
       ++iter;
       old_loglh = loglh;
@@ -277,7 +288,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
       /* optimize ALL branches */
 
-      bool impr = (loglh - old_loglh > _lh_epsilon);
+      bool impr = (loglh - old_loglh > epsilon);
       if (impr)
       {
         /* got improvement in thorough mode: reset min radius to 1 */
@@ -362,8 +373,10 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if(preulitameTree) corax_utree_destroy(preulitameTree, NULL);
 
+  /* 
   if(_msa_error_rate)
     msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false);
+ */
 
   return loglh;
 }

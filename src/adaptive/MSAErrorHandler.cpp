@@ -300,7 +300,7 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
     
     double new_loglh;
     dist_size = _dist_size;
-    unsigned int errors_size = 10*dist_size;
+    // unsigned int errors_size = 10*dist_size;
 
     // if(delta_loglh_dist) delete[] delta_loglh_dist;
 
@@ -316,7 +316,7 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
 
         new_loglh = treeinfo.loglh();
         
-        double delta_loglh = new_loglh - init_loglh;
+        double delta_loglh = fabs(new_loglh - init_loglh);
         delta_loglh_dist[experiment] = delta_loglh;
         new_loglh_dist[experiment] = new_loglh;
 
@@ -338,13 +338,13 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
     }
 
     assert(delta_loglh_dist != nullptr);
+    std::sort(delta_loglh_dist, delta_loglh_dist + dist_size);
     
     if(outfile_initial.length() > 0) 
         write_dist_to_file(initial ? outfile_initial : outfile_final);
     
     // if(ParallelContext::group_master_thread())
     
-    //std::sort(delta_loglh_dist, delta_loglh_dist + dist_size);
     //max_loglh = init_loglh + delta_loglh_dist[dist_size - 1];
     // cout << "Ln-1 " << init_loglh << " and max_loglh " << max_loglh << endl;
 
@@ -384,7 +384,13 @@ void MSAErrorHandler::write_dist_to_file(std::string outfile){
     }
 }
 
+double MSAErrorHandler::draw_proportionately_from_distribution(){
 
+    int epsilon_index = (int) (0.95*dist_size);
+    epsilon = delta_loglh_dist[epsilon_index];
+    //epsilon = fabs(epsilon);
+    return epsilon;
+}
 
 void MSAErrorHandler::store_brlens(corax_treeinfo_t* treeinfo, bool preultimate){
 
@@ -399,7 +405,7 @@ void MSAErrorHandler::store_brlens_partition(corax_treeinfo_t* treeinfo, unsigne
     // cout << "Store with preultimate " << preultimate << endl;
 
     double **store_matrix = preultimate ? tmp_brlens : original_brlens;
-    corax_partition_t* partition = treeinfo->partitions[partition_id];
+    // corax_partition_t* partition = treeinfo->partitions[partition_id];
 
     unsigned int num_branches = 2*treeinfo->tip_count - 3;
     store_matrix[partition_id] = new double[num_branches];

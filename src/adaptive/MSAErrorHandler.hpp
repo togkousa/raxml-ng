@@ -91,6 +91,9 @@ class MSAErrorHandler{
                             double init_loglh,
                             bool initial);
 
+        
+        double draw_proportionately_from_distribution();
+
         double get_max_loglh(){ return max_loglh;}
         double get_epsilon() {return epsilon; }
 
