@@ -74,8 +74,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   int& best_fast_radius = search_state.fast_spr_radius;
   spr_params.lh_epsilon_brlen_full = _lh_epsilon;
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
-  spr_params.spr_file = NULL;
-  spr_params.spr_topologies = -1;
 
   // msa-error-rate configuration
   std::shared_ptr<MSAErrorHandler> msa_error_handler;
@@ -238,9 +236,8 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     iter = 0;
   }
 
-  spr_params.spr_file = nullptr;
   corax_utree_t *preulitameTree = nullptr;  
-  double preultimate_loglh;
+  // double preultimate_loglh;
   
   
   if (do_step(CheckpointStep::slowSPR))
@@ -256,7 +253,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       old_loglh = loglh;
       
 
-      if(false && spr_params.radius_max + 1 >= radius_limit && _msa_error_rate){
+      /* if(false && spr_params.radius_max + 1 >= radius_limit && _msa_error_rate){
         
         preultimate_loglh = loglh;
         spr_params.spr_file = _spr_file.c_str();
@@ -272,7 +269,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
         msa_error_handler->store_brlens(tmp_treeinfo, true);
         
-      }
+      } */
 
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
           " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
@@ -280,11 +277,11 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
       
        
-      if(false && spr_params.radius_max + 1 >= radius_limit  && _msa_error_rate){
+      /* if(false && spr_params.radius_max + 1 >= radius_limit  && _msa_error_rate){
         dist_size = spr_params.spr_topologies;
         spr_params.spr_topologies = -1;
         spr_params.spr_file = NULL;
-      }
+      } */
 
       /* optimize ALL branches */
 
@@ -295,9 +292,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
         spr_params.radius_min = 1;
         /* reset max radius to 5; or maybe better keep old value? */
         spr_params.radius_max = radius_step;
-        spr_params.spr_topologies = -1;
-        spr_params.spr_file = NULL;
-
       }
       else
       {

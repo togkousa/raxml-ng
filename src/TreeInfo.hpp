@@ -26,9 +26,6 @@ struct spr_round_params
     cutoff_info.lh_dec_sum = 0.;
     cutoff_info.lh_cutoff = loglh / -1000.0;
   }
-
-  int spr_topologies;
-  const char* spr_file;
 };
 
 struct nni_round_params
