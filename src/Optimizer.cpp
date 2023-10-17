@@ -14,7 +14,7 @@ Optimizer::Optimizer (const Options &opts) :
     _lh_epsilon(opts.lh_epsilon), _lh_epsilon_brlen_triplet(opts.lh_epsilon_brlen_triplet), 
     _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
     _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), 
-    _msa_error_rate(opts.msa_error_rate), _seed(opts.random_seed)
+    _msa_error_rate(opts.msa_error_rate), _msa_error_file(opts.msa_error_file), _seed(opts.random_seed)
 {
 }
 
@@ -366,11 +366,9 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     cm.update_and_write(treeinfo);
 
   if(preulitameTree) corax_utree_destroy(preulitameTree, NULL);
-
-  /* 
-  if(_msa_error_rate)
+  
+  if(_msa_error_rate && _msa_error_file.length() > 0)
     msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false);
- */
 
   return loglh;
 }
