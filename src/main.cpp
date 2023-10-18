@@ -2731,6 +2731,10 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
     auto log_level = instance.start_trees.size() > 1 ? LogLevel::result : LogLevel::info;
     Optimizer optimizer(opts);
 
+    // we want the two distributions to ne calculated and saved only once
+    // otherwise, only the initial distribution is calculated
+    if(start_tree_num > 1) optimizer._msa_error_file = "";
+    
     if (opts.command == Command::evaluate || opts.command == Command::sitelh ||
         opts.command == Command::ancestral)
     { 
