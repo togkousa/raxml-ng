@@ -37,6 +37,7 @@ class MSAErrorHandler{
         double* new_loglh_dist;
         double* errors;
         double epsilon;
+        double mean;
 
         double** tmp_brlens;
         double** original_brlens; 

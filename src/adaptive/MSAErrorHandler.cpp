@@ -1,3 +1,7 @@
+#define _USE_MATH_DEFINES
+ 
+#include <cmath>
+
 #include "MSAErrorHandler.hpp"
 #include "../ParallelContext.hpp"
 #include <fstream>
@@ -37,6 +41,7 @@ MSAErrorHandler::MSAErrorHandler(const corax_treeinfo_t* treeinfo,
     init_random_seed();
 
     epsilon = 0;
+    mean = 0;
     outfile_initial = _outfile.length() > 0 ? _outfile + "_initial.csv" : "" ;
     outfile_final = _outfile.length() > 0 ? _outfile + "_final.csv" : "" ;
 }
@@ -320,7 +325,7 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
         delta_loglh_dist[experiment] = delta_loglh;
         new_loglh_dist[experiment] = new_loglh;
 
-        epsilon += delta_loglh / dist_size;
+        if(initial) mean += delta_loglh / dist_size;
 
         // if(ParallelContext::group_master_thread())
         // cout << "Experiment = " << experiment <<", Mutations = " << mutations <<", New loglh = " << delta_loglh << endl;
@@ -343,6 +348,19 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
     if(outfile_initial.length() > 0) 
         write_dist_to_file(initial ? outfile_initial : outfile_final);
     
+    // calculate std
+    if(initial){
+        double sd = 0;
+        
+        for (unsigned int i = 0; i < dist_size; ++i) {
+            sd += pow(delta_loglh_dist[i] - mean, 2);
+        }
+
+        sd = sqrt(sd / dist_size);
+
+        epsilon = 1.645 * M_SQRT2 * sd;
+
+    }
     // if(ParallelContext::group_master_thread())
     
     //max_loglh = init_loglh + delta_loglh_dist[dist_size - 1];
@@ -386,9 +404,12 @@ void MSAErrorHandler::write_dist_to_file(std::string outfile){
 
 double MSAErrorHandler::draw_proportionately_from_distribution(){
 
-    int epsilon_index = (int) (0.95*dist_size);
-    epsilon = delta_loglh_dist[epsilon_index];
+    //int epsilon_index = (int) (0.95*dist_size);
+    //epsilon = delta_loglh_dist[epsilon_index];
     //epsilon = fabs(epsilon);
+
+    // std::cout << "sqrt(2) = " << M_SQRT2 << endl;
+    // cout << epsilon << endl;
     return epsilon;
 }
 
