@@ -321,7 +321,7 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
 
         new_loglh = treeinfo.loglh();
         
-        double delta_loglh = fabs(new_loglh - init_loglh);
+        double delta_loglh = init_loglh - new_loglh;
         delta_loglh_dist[experiment] = delta_loglh;
         new_loglh_dist[experiment] = new_loglh;
 
@@ -410,7 +410,9 @@ double MSAErrorHandler::draw_proportionately_from_distribution(){
 
     // std::cout << "sqrt(2) = " << M_SQRT2 << endl;
     // cout << epsilon << endl;
-    return epsilon;
+    int rand_index = rand() % dist_size;
+    double rand_epsilon =  delta_loglh_dist[rand_index];
+    return rand_epsilon;
 }
 
 void MSAErrorHandler::store_brlens(corax_treeinfo_t* treeinfo, bool preultimate){

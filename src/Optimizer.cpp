@@ -152,7 +152,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
       while (spr_params.radius_min < radius_limit)
       {
-        epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : 0.1 ;
+        epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : _lh_epsilon ;
 
         cm.update_and_write(treeinfo);
 
@@ -232,14 +232,11 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     /* init slow SPRs */
     spr_params.thorough = 1;
     spr_params.radius_min = 1;
-    spr_params.radius_max = radius_step;
+    spr_params.radius_max = 10;
     iter = 0;
   }
-
-  corax_utree_t *preulitameTree = nullptr;  
-  // double preultimate_loglh;
   
-  
+  bool impr = true;
   if (do_step(CheckpointStep::slowSPR))
   {
     double epsilon;
@@ -251,109 +248,27 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       cm.update_and_write(treeinfo);
       ++iter;
       old_loglh = loglh;
-      
-
-      /* if(false && spr_params.radius_max + 1 >= radius_limit && _msa_error_rate){
-        
-        preultimate_loglh = loglh;
-        spr_params.spr_file = _spr_file.c_str();
-        remove(spr_params.spr_file);
-        spr_params.spr_topologies = 0;
-
-        if(preulitameTree) corax_utree_destroy(preulitameTree, NULL);
-
-        corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
-        const corax_utree_t * tmp_tree = tmp_treeinfo->tree;
-        preulitameTree = corax_utree_clone(tmp_tree);
-        preulitameTree->vroot = preulitameTree->nodes[0]->back;
-
-        msa_error_handler->store_brlens(tmp_treeinfo, true);
-        
-      } */
 
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
           " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
       loglh = treeinfo.spr_round(spr_params);
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
-      
-       
-      /* if(false && spr_params.radius_max + 1 >= radius_limit  && _msa_error_rate){
-        dist_size = spr_params.spr_topologies;
-        spr_params.spr_topologies = -1;
-        spr_params.spr_file = NULL;
-      } */
 
-      /* optimize ALL branches */
-
-      bool impr = (loglh - old_loglh > epsilon);
-      if (impr)
+      impr = (loglh - old_loglh > epsilon);
+      /* if (impr)
       {
-        /* got improvement in thorough mode: reset min radius to 1 */
         spr_params.radius_min = 1;
-        /* reset max radius to 5; or maybe better keep old value? */
         spr_params.radius_max = radius_step;
       }
       else
       {
-        /* no improvement in thorough mode: set min radius to old max,
-         * and increase max radius by the step */
         spr_params.radius_min = spr_params.radius_max + 1;
         spr_params.radius_max += radius_step;
-      }
+      } */
     }
-    while (spr_params.radius_min >= 0 && spr_params.radius_min < radius_limit);
+    while (impr);
   }
 
-  /* 
-  double delta_loglh = loglh - old_loglh;
-  int passed = 0, failed = 0;
-  int experiment_times = 5;
-  
-  if(_msa_error_rate && dist_size){
-
-    for(unsigned int exp = 0; exp<experiment_times; exp++){
-      
-      remove(_msa_error_file.c_str());
-
-      corax_treeinfo_t* final_treeinfo = &treeinfo.pll_treeinfo_unconst();
-      corax_utree_t *final_tree = final_treeinfo->tree;
-      final_treeinfo->tree = preulitameTree;
-      final_treeinfo->root = preulitameTree->vroot;
-
-      // modify pmatrices
-      msa_error_handler->set_brlens(final_treeinfo, true);
-
-      double test_loglh = corax_treeinfo_compute_loglh(final_treeinfo, 0);
-      // cout << "Test loglh = " << test_loglh << " and old loglh " << preultimate_loglh << endl;
-      assert(fabs(test_loglh - preultimate_loglh) < 1e-4);
-
-      // final_treeinfo->tree = preulitameTree;
-      msa_error_handler->msa_error_dist(treeinfo, dist_size, preultimate_loglh);
-
-      // modify pmatrices back
-      final_treeinfo->tree = final_tree;
-      final_treeinfo->root = final_tree->vroot;
-      msa_error_handler->set_brlens(final_treeinfo, false);
-      test_loglh = corax_treeinfo_compute_loglh(final_treeinfo, 0);
-      assert(fabs(test_loglh - loglh) < 1e-4);
-
-      if(loglh < msa_error_handler->get_max_loglh()){
-         failed++;
-      }
-      else passed++;
-    }
-
-    ofstream myfile (_msa_error_file, std::ios_base::app);
-    if (myfile.is_open())
-    {
-        myfile << failed << "\n" ;
-        myfile.close();
-    }
-    
-  }
-
-  cout << "Passed " << passed << ", failed " << failed << endl;
- */  
   /* Final thorough model optimization */
   if (do_step(CheckpointStep::modOpt4))
   {
@@ -364,8 +279,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::finish))
     cm.update_and_write(treeinfo);
-
-  if(preulitameTree) corax_utree_destroy(preulitameTree, NULL);
   
   if(_msa_error_rate && _msa_error_file.length() > 0)
     msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false);
