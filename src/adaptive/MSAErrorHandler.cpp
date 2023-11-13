@@ -34,8 +34,6 @@ MSAErrorHandler::MSAErrorHandler(const corax_treeinfo_t* treeinfo,
     
     mutations_info = new std::vector<int *>;
     original_clvs = new std::vector<double *>;
-
-    tmp_brlens = new double*[partition_count];
     original_brlens = new double*[partition_count];
 
     init_random_seed();
@@ -60,12 +58,10 @@ MSAErrorHandler::~MSAErrorHandler(){
 
     if(max_loglh){
         for(unsigned int p = 0; p<partition_count; p++){
-            delete[] tmp_brlens[p];
             delete[] original_brlens[p];
         }
     }
     
-    delete[] tmp_brlens;
     delete[] original_brlens;
 }
 
@@ -300,7 +296,8 @@ void MSAErrorHandler::reverse_mutations(const corax_treeinfo_t* treeinfo){
 void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo, 
                                     unsigned int _dist_size, 
                                     double init_loglh,
-                                    bool initial)
+                                    bool initial,
+                                    double fast_modopt_eps)
 {
     
     double new_loglh;
@@ -312,15 +309,18 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
     delta_loglh_dist = new double[dist_size];
     new_loglh_dist = new double[dist_size];
     errors = new double[10*dist_size];
-
+    
+    // if(ParallelContext::group_master_thread())
+    corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
+    store_brlens(tmp_treeinfo, initial);
+    
     for (unsigned int experiment = 0; experiment < dist_size; experiment++){
         
-        // if(ParallelContext::group_master_thread())
         apply_random_mutations(&treeinfo.pll_treeinfo());
         // ParallelContext::barrier();
+        new_loglh = corax_treeinfo_compute_loglh(tmp_treeinfo, 0);
+        new_loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
 
-        new_loglh = treeinfo.loglh();
-        
         double delta_loglh = init_loglh - new_loglh;
         delta_loglh_dist[experiment] = delta_loglh;
         new_loglh_dist[experiment] = new_loglh;
@@ -328,16 +328,28 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
         if(initial) mean += delta_loglh / dist_size;
 
         // if(ParallelContext::group_master_thread())
-        // cout << "Experiment = " << experiment <<", Mutations = " << mutations <<", New loglh = " << delta_loglh << endl;
-        
+        /* 
+        cout << "Experiment = " << experiment 
+            <<", Mutations = " << mutations 
+            <<", New loglh = " << new_loglh 
+            <<", Old_loglh = " << init_loglh << endl;
+         */
         //getchar();
 
         // if(ParallelContext::group_master_thread()) 
         // if(ParallelContext::group_master_thread())
-        reverse_mutations(&treeinfo.pll_treeinfo());
-        
+        set_brlens(tmp_treeinfo);
+        reverse_mutations(tmp_treeinfo);
+
         //ParallelContext::barrier();
+        //new_loglh = corax_treeinfo_compute_loglh(tmp_treeinfo, 0);
         new_loglh = treeinfo.loglh();
+
+        /* 
+        cout << "Experiment = " << experiment 
+            << ", Οld loglh = " << init_loglh << ", test loglh = " << new_loglh << endl;
+        */
+        
         assert(fabs(init_loglh - new_loglh)<1e-4);
         
     }
@@ -402,50 +414,58 @@ void MSAErrorHandler::write_dist_to_file(std::string outfile){
     }
 }
 
-double MSAErrorHandler::draw_proportionately_from_distribution(){
+double MSAErrorHandler::draw_proportionately_from_distribution(bool randomized){
 
-    //int epsilon_index = (int) (0.95*dist_size);
-    //epsilon = delta_loglh_dist[epsilon_index];
-    //epsilon = fabs(epsilon);
+    double _epsilon = 0;
+    if(!randomized){
+        _epsilon = epsilon;
+    } else {
+        int rand_index = rand() % dist_size;
+        _epsilon =  delta_loglh_dist[rand_index];
+    }
 
-    // std::cout << "sqrt(2) = " << M_SQRT2 << endl;
-    // cout << epsilon << endl;
-    int rand_index = rand() % dist_size;
-    double rand_epsilon =  delta_loglh_dist[rand_index];
-    return rand_epsilon;
+    return _epsilon;
 }
 
-void MSAErrorHandler::store_brlens(corax_treeinfo_t* treeinfo, bool preultimate){
+void MSAErrorHandler::store_brlens(corax_treeinfo_t* treeinfo, bool initial){
 
     for(unsigned int p = 0; p<partition_count; p++)
-        store_brlens_partition(treeinfo, p, preultimate);
+        store_brlens_partition(treeinfo, p, initial);
 
 }
 
 
-void MSAErrorHandler::store_brlens_partition(corax_treeinfo_t* treeinfo, unsigned int partition_id, bool preultimate){
+void MSAErrorHandler::store_brlens_partition(corax_treeinfo_t* treeinfo, unsigned int partition_id, bool initial){
 
     // cout << "Store with preultimate " << preultimate << endl;
 
-    double **store_matrix = preultimate ? tmp_brlens : original_brlens;
-    // corax_partition_t* partition = treeinfo->partitions[partition_id];
-
     unsigned int num_branches = 2*treeinfo->tip_count - 3;
-    store_matrix[partition_id] = new double[num_branches];
+    
+    if(initial) original_brlens[partition_id] = new double[num_branches];
 
-    memcpy(store_matrix[partition_id], treeinfo->branch_lengths[partition_id], num_branches*sizeof(double));
+    memcpy(original_brlens[partition_id], treeinfo->branch_lengths[partition_id], num_branches*sizeof(double));
 
 }
 
-void MSAErrorHandler::set_brlens(corax_treeinfo_t* treeinfo, bool preultimate){
-
-    if(preultimate) store_brlens(treeinfo, false);
-
-    double **copy_pmatrx = preultimate ? tmp_brlens : original_brlens;
+void MSAErrorHandler::set_brlens(corax_treeinfo_t* treeinfo){
 
     unsigned int num_branches = 2*treeinfo->tip_count - 3;
+    //int nodes_count = 2*treeinfo->tip_count - 3;
 
     for(unsigned int p = 0; p < partition_count; p++){
-        memcpy(treeinfo->branch_lengths[p], copy_pmatrx[p], num_branches*sizeof(double));
+        memcpy(treeinfo->branch_lengths[p], original_brlens[p], num_branches*sizeof(double));
+
+        update_branches_on_tree_iterative(treeinfo->tree->nodes[0], p);
     }
 } 
+
+void MSAErrorHandler::update_branches_on_tree_iterative(corax_unode_t* node, int partition__id){
+
+    node->length = original_brlens[partition__id][node->pmatrix_index];
+    node->back->length = node->length;
+
+    if(node->back->next){
+        update_branches_on_tree_iterative(node->back->next, partition__id);
+        update_branches_on_tree_iterative(node->back->next->next, partition__id);
+    }
+}

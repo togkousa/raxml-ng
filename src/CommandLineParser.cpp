@@ -86,6 +86,7 @@ static struct option long_options[] =
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
   {"msa-error-rate",     required_argument, 0, 0 },  /*  63 */
   {"msa-error-file-pre", required_argument, 0, 0 },  /*  64 */
+  {"msa-error-randomized", required_argument, 0, 0 },  /*  65 */
   { 0, 0, 0, 0 }
 };
 
@@ -316,6 +317,7 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.msa_error_rate = 0.0;
   opts.kh_test = false;
   opts.msa_error_file = "";
+  opts.msa_error_randomized = false;
   
   /* bootstrapping / bootstopping */
   opts.bs_metrics.push_back(BranchSupportMetric::fbp);
@@ -1021,7 +1023,17 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
       case 64: /* msa-error file */
         opts.msa_error_file = optarg;
         break;
-      
+
+      case 65:  /* site repeats */
+        if (!optarg || (strcasecmp(optarg, "on") != 0))
+        {
+          opts.msa_error_randomized = false;
+        }
+        else{
+          opts.msa_error_randomized = true;
+        }
+        break;
+
       default:
         throw  OptionException("Internal error in option parsing");
     }

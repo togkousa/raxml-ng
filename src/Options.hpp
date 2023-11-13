@@ -92,6 +92,7 @@ public:
 
   double msa_error_rate;
   std::string msa_error_file;
+  bool msa_error_randomized;
   bool kh_test;
 
   unsigned int num_searches;

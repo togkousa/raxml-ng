@@ -11,10 +11,12 @@
 using namespace std;
 
 Optimizer::Optimizer (const Options &opts) :
+    _msa_error_file(opts.msa_error_file),
     _lh_epsilon(opts.lh_epsilon), _lh_epsilon_brlen_triplet(opts.lh_epsilon_brlen_triplet), 
     _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
     _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), 
-    _msa_error_rate(opts.msa_error_rate), _msa_error_file(opts.msa_error_file), _seed(opts.random_seed)
+    _msa_error_rate(opts.msa_error_rate),
+    _msa_error_randomized(opts.msa_error_randomized), _seed(opts.random_seed)
 {
 }
 
@@ -124,7 +126,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   // Do it once here !!!
   unsigned int dist_size = 1000;
   if(_msa_error_rate)
-    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, true);
+    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, true, fast_modopt_eps);
   
   // do SPRs
   const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
@@ -152,7 +154,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
       while (spr_params.radius_min < radius_limit)
       {
-        epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : _lh_epsilon ;
+        epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution(_msa_error_randomized) : _lh_epsilon ;
 
         cm.update_and_write(treeinfo);
 
@@ -206,7 +208,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     double epsilon;
     do
     { 
-      epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : _lh_epsilon ;
+      epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution(_msa_error_randomized) : _lh_epsilon ;
       
       cm.update_and_write(treeinfo);
       ++iter;
@@ -243,7 +245,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
     do
     {
-      epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution() : _lh_epsilon ;
+      epsilon = _msa_error_rate ? msa_error_handler->draw_proportionately_from_distribution(_msa_error_randomized) : _lh_epsilon ;
 
       cm.update_and_write(treeinfo);
       ++iter;
@@ -281,7 +283,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     cm.update_and_write(treeinfo);
   
   if(_msa_error_rate && _msa_error_file.length() > 0)
-    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false);
+    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false, fast_modopt_eps);
 
   return loglh;
 }

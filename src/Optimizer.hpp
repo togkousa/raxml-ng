@@ -34,6 +34,7 @@ private:
 
   // msa error-rate
   double _msa_error_rate;
+  bool _msa_error_randomized;
   unsigned int _seed;
 
   // functions for adaptive mode

@@ -39,7 +39,6 @@ class MSAErrorHandler{
         double epsilon;
         double mean;
 
-        double** tmp_brlens;
         double** original_brlens; 
 
         double max_loglh;
@@ -60,8 +59,9 @@ class MSAErrorHandler{
         
         void clear_vectors();
         void write_dist_to_file(std::string outfile);
-        void store_brlens_partition(corax_treeinfo_t* treeinfo, unsigned int partition_id, bool preultimate);
+        void store_brlens_partition(corax_treeinfo_t* treeinfo, unsigned int partition_id, bool initial);
 
+        void update_branches_on_tree_iterative(corax_unode_t* node, int partiiton_id);
 
     public:
 
@@ -83,17 +83,18 @@ class MSAErrorHandler{
                                 unsigned int sites);
 
 
-        void store_brlens(corax_treeinfo_t* treeinfo, bool preultimate = true);
+        void store_brlens(corax_treeinfo_t* treeinfo, bool initial);
 
-        void set_brlens(corax_treeinfo_t* treeinfo, bool preultimate = true);
+        void set_brlens(corax_treeinfo_t* treeinfo);
 
         void msa_error_dist(TreeInfo& treeinfo, 
                             unsigned int _dist_size, 
                             double init_loglh,
-                            bool initial);
+                            bool initial,
+                            double fast_modopt_eps = 10.);
 
         
-        double draw_proportionately_from_distribution();
+        double draw_proportionately_from_distribution(bool randomized);
 
         double get_max_loglh(){ return max_loglh;}
         double get_epsilon() {return epsilon; }
