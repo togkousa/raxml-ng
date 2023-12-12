@@ -319,7 +319,7 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
         apply_random_mutations(&treeinfo.pll_treeinfo());
         // ParallelContext::barrier();
         new_loglh = corax_treeinfo_compute_loglh(tmp_treeinfo, 0);
-        new_loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
+        //new_loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
 
         double delta_loglh = init_loglh - new_loglh;
         delta_loglh_dist[experiment] = delta_loglh;
@@ -338,7 +338,8 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
 
         // if(ParallelContext::group_master_thread()) 
         // if(ParallelContext::group_master_thread())
-        set_brlens(tmp_treeinfo);
+        
+        //set_brlens(tmp_treeinfo);
         reverse_mutations(tmp_treeinfo);
 
         //ParallelContext::barrier();

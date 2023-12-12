@@ -215,7 +215,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
       old_loglh = loglh;
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
-          " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
+          " spr round " << iter << " (radius: " << spr_params.radius_max << "), epsilon = " << epsilon << endl;
       loglh = treeinfo.spr_round(spr_params);
 
       /* optimize ALL branches */
@@ -252,7 +252,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       old_loglh = loglh;
 
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
-          " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
+          " spr round " << iter << " (radius: " << spr_params.radius_max << "), epsilon = " << epsilon << endl;
       loglh = treeinfo.spr_round(spr_params);
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
 
