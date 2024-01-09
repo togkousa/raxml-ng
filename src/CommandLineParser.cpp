@@ -1040,7 +1040,6 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         break;
       
       case 66:
-        opts.sampling_noise = true;
         if (strcasecmp(optarg, "on") == 0) {
           opts.msa_error_blo = true;
         } else if (strcasecmp(optarg, "off") == 0) {
