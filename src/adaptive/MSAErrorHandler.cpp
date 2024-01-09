@@ -297,7 +297,8 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
                                     unsigned int _dist_size, 
                                     double init_loglh,
                                     bool initial,
-                                    double fast_modopt_eps)
+                                    double fast_modopt_eps,
+                                    bool blo_enabled)
 {
     
     double new_loglh;
@@ -312,14 +313,15 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
     
     // if(ParallelContext::group_master_thread())
     corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
-    store_brlens(tmp_treeinfo, initial);
+    if(blo_enabled) store_brlens(tmp_treeinfo, initial);
     
     for (unsigned int experiment = 0; experiment < dist_size; experiment++){
         
         apply_random_mutations(&treeinfo.pll_treeinfo());
         // ParallelContext::barrier();
         new_loglh = corax_treeinfo_compute_loglh(tmp_treeinfo, 0);
-        //new_loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
+        
+        if(blo_enabled) new_loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
 
         double delta_loglh = init_loglh - new_loglh;
         delta_loglh_dist[experiment] = delta_loglh;
@@ -339,12 +341,12 @@ void MSAErrorHandler::msa_error_dist(TreeInfo& treeinfo,
         // if(ParallelContext::group_master_thread()) 
         // if(ParallelContext::group_master_thread())
         
-        //set_brlens(tmp_treeinfo);
+        if(blo_enabled) set_brlens(tmp_treeinfo);
         reverse_mutations(tmp_treeinfo);
 
         //ParallelContext::barrier();
-        //new_loglh = corax_treeinfo_compute_loglh(tmp_treeinfo, 0);
-        new_loglh = treeinfo.loglh();
+        new_loglh = corax_treeinfo_compute_loglh(tmp_treeinfo, 0);
+        // new_loglh = treeinfo.loglh();
 
         /* 
         cout << "Experiment = " << experiment 

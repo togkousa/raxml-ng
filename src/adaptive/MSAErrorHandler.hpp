@@ -91,7 +91,8 @@ class MSAErrorHandler{
                             unsigned int _dist_size, 
                             double init_loglh,
                             bool initial,
-                            double fast_modopt_eps = 10.);
+                            double fast_modopt_eps = 10.,
+                            bool blo_enabled = false);
 
         
         double draw_proportionately_from_distribution(bool randomized);

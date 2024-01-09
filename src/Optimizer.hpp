@@ -35,6 +35,9 @@ private:
   // msa error-rate
   double _msa_error_rate;
   bool _msa_error_randomized;
+  bool _msa_error_blo;
+  bool _sampling_noise;
+  bool _noise_rell;
   unsigned int _seed;
 
   // functions for adaptive mode
@@ -43,6 +46,7 @@ private:
   bool converged(CheckpointManager& cm, double test_loglh, double epsilon);
   int adaptive_slow_spr_radius(double difficulty);
   
+  double sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** persite_lnl, double loglh, bool rell);
 
 };
 

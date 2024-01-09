@@ -93,7 +93,10 @@ public:
   double msa_error_rate;
   std::string msa_error_file;
   bool msa_error_randomized;
+  bool msa_error_blo;
   bool kh_test;
+  bool sampling_noise;
+  bool noise_rell;
 
   unsigned int num_searches;
   unsigned long long terrace_maxsize;

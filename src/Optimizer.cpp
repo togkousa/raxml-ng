@@ -4,6 +4,10 @@
 #include "adaptive/KHtester.hpp"
 #include <memory>
 
+#define _USE_MATH_DEFINES 
+#include <cmath>
+
+
 /* 
 #include <thread>         // std::thread
 #include <mutex>          // std::mutex
@@ -16,9 +20,10 @@ Optimizer::Optimizer (const Options &opts) :
     _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
     _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), 
     _msa_error_rate(opts.msa_error_rate),
-    _msa_error_randomized(opts.msa_error_randomized), _seed(opts.random_seed)
+    _msa_error_randomized(opts.msa_error_randomized), _msa_error_blo(opts.msa_error_blo),
+    _sampling_noise(opts.sampling_noise), _noise_rell(opts.noise_rell) , _seed(opts.random_seed)
 {
-}
+} 
 
 Optimizer::~Optimizer ()
 {
@@ -79,10 +84,13 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   // msa-error-rate configuration
   std::shared_ptr<MSAErrorHandler> msa_error_handler;
+  double **persite_lnl;
 
   if(_msa_error_rate){
 
     assert(treeinfo.kh_test() == false);
+    assert(_sampling_noise == false);
+
     msa_error_handler = make_shared<MSAErrorHandler>(&treeinfo.pll_treeinfo(),
                                                       _msa_error_rate,
                                                       _seed,
@@ -123,10 +131,26 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     iter = 0;
   }
 
+  if(_sampling_noise){
+
+    LOG_PROGRESS(loglh) << "Noise Sampling Using the " << (_noise_rell ? "RELL" : "NO-RELL") << " apporach." << endl;
+    assert(_msa_error_rate == 0);
+    unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
+    
+    persite_lnl = new double*[partition_count];
+    for (unsigned int part = 0; part<partition_count; part++)
+      persite_lnl[part] = new double[treeinfo.pll_treeinfo().partitions[part]->sites];
+    
+    corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
+    loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl);
+    _lh_epsilon = sampling_noise_epsilon(tmp_treeinfo, persite_lnl, loglh, _noise_rell);
+
+  }
+
   // Do it once here !!!
   unsigned int dist_size = 1000;
   if(_msa_error_rate)
-    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, true, fast_modopt_eps);
+    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, true, fast_modopt_eps, _msa_error_blo);
   
   // do SPRs
   const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
@@ -160,7 +184,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
         ++iter;
         LOG_PROGRESS(best_loglh) << "AUTODETECT spr round " << iter << " (radius: " <<
-            spr_params.radius_max << ")" << endl;
+            spr_params.radius_max << "), epsilon = " << epsilon << endl;
         loglh = treeinfo.spr_round(spr_params);
 
         if (loglh - best_loglh > epsilon)
@@ -283,7 +307,17 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     cm.update_and_write(treeinfo);
   
   if(_msa_error_rate && _msa_error_file.length() > 0)
-    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false, fast_modopt_eps);
+    msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false, fast_modopt_eps, _msa_error_blo);
+
+  if(_sampling_noise){
+    
+    unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
+    for (unsigned int part = 0; part<partition_count; part++)
+      delete[] persite_lnl[part];
+
+    delete[] persite_lnl;
+
+  }
 
   return loglh;
 }
@@ -541,4 +575,79 @@ int Optimizer::adaptive_slow_spr_radius(double difficulty){
   } else {
     return (int) (-50*difficulty + 55);
   }
+}
+
+double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** persite_lnl, double loglh, bool rell){
+
+  double epsilon = 0;
+  unsigned int total_sites = 0;
+
+  unsigned int partition_count = treeinfo->partition_count;
+  unsigned int part, i;
+
+  for(part = 0; part<partition_count; part++) total_sites += treeinfo->partitions[part]->sites;
+
+  if(rell) {
+
+    srand(_seed);
+    int pIndex, sIndex, exp;
+    int rell_size = 1000;
+    double * rell_dist = new double[rell_size];
+    double * logl_diff_dist = new double[rell_size];
+
+    for(exp = 0; exp < rell_size; exp++){
+      
+      double rell_loglh = 0;
+      for (i = 0; i<total_sites; i++){
+        
+        if(partition_count > 1){
+          pIndex = rand() % partition_count;
+        } else {
+          pIndex = 0;
+        }
+
+        sIndex =  rand() % treeinfo->partitions[pIndex]->sites;
+        rell_loglh += persite_lnl[pIndex][sIndex];
+      }
+
+      rell_dist[exp] = rell_loglh;
+    }
+
+    for(exp = 0; exp < rell_size; exp++){
+      int ind1 = rand() % rell_size;
+      int ind2 = rand() % rell_size;
+
+      logl_diff_dist[exp] = fabs(rell_dist[ind1] - rell_dist[ind2]);
+    }
+
+    std::sort(logl_diff_dist, logl_diff_dist + rell_size);
+    
+    /* 
+    for(exp = 0; exp < rell_size; exp++)
+      cout << "Loglh diff [" << exp << "] = " << logl_diff_dist[exp] << endl;
+    */
+
+    int epsilon_index = (int) (0.95*rell_size);
+    epsilon = logl_diff_dist[epsilon_index];
+
+    delete[] logl_diff_dist;
+    delete[] rell_dist;
+
+  } else {
+
+    double stdev = 0;
+    double mean = loglh / total_sites;
+
+    for (part = 0; part < partition_count; part++)
+      for(i = 0; i < treeinfo->partitions[part]->sites; i++)
+        stdev += pow(persite_lnl[part][i] - mean, 2);
+
+    stdev = sqrt(stdev / total_sites);
+    cout << "Stdev = " << stdev << endl; 
+    
+    epsilon = 1.645 * M_SQRT2 * sqrt(total_sites) * stdev;
+    
+  }
+
+  return epsilon;
 }

@@ -87,6 +87,8 @@ static struct option long_options[] =
   {"msa-error-rate",     required_argument, 0, 0 },  /*  63 */
   {"msa-error-file-pre", required_argument, 0, 0 },  /*  64 */
   {"msa-error-randomized", required_argument, 0, 0 },  /*  65 */
+  {"msa-error-blo",     required_argument, 0, 0 },  /*  66 */
+  {"sampling-noise",     required_argument, 0, 0 },  /*  67 */
   { 0, 0, 0, 0 }
 };
 
@@ -318,6 +320,9 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.kh_test = false;
   opts.msa_error_file = "";
   opts.msa_error_randomized = false;
+  opts.msa_error_blo = false;
+  opts.sampling_noise = false;
+  opts.noise_rell = false;
   
   /* bootstrapping / bootstopping */
   opts.bs_metrics.push_back(BranchSupportMetric::fbp);
@@ -1032,6 +1037,26 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         else{
           opts.msa_error_randomized = true;
         }
+        break;
+      
+      case 66:
+        opts.sampling_noise = true;
+        if (strcasecmp(optarg, "on") == 0) {
+          opts.msa_error_blo = true;
+        } else if (strcasecmp(optarg, "off") == 0) {
+          opts.msa_error_blo = false;
+        }
+
+        break;
+      
+      case 67:
+        opts.sampling_noise = true;
+        if (strcasecmp(optarg, "rell") == 0) {
+          opts.noise_rell = true;
+        } else if (strcasecmp(optarg, "norell") == 0) {
+          opts.noise_rell = false;
+        }
+
         break;
 
       default:
