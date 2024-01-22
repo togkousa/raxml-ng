@@ -144,7 +144,8 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
     loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl);
     _lh_epsilon = sampling_noise_epsilon(tmp_treeinfo, persite_lnl, loglh, _noise_rell);
-
+    
+    LOG_PROGRESS(loglh) << (_noise_rell ? "RELL" : "NO-RELL") << " apporach. Epsilon = " << _lh_epsilon << endl;
   }
 
   // Do it once here !!!
@@ -620,18 +621,15 @@ double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** pe
       logl_diff_dist[exp] = fabs(rell_dist[ind1] - rell_dist[ind2]);
     }
 
-    std::sort(logl_diff_dist, logl_diff_dist + rell_size);
-    
-    /* 
-    for(exp = 0; exp < rell_size; exp++)
-      cout << "Loglh diff [" << exp << "] = " << logl_diff_dist[exp] << endl;
-    */
+    sort(logl_diff_dist, logl_diff_dist + rell_size);
 
     int epsilon_index = (int) (0.95*rell_size);
     epsilon = logl_diff_dist[epsilon_index];
 
     delete[] logl_diff_dist;
     delete[] rell_dist;
+
+    //cout << "RELL epsilon " << epsilon << endl;
 
   } else {
 
@@ -643,10 +641,9 @@ double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** pe
         stdev += pow(persite_lnl[part][i] - mean, 2);
 
     stdev = sqrt(stdev / total_sites);
-    cout << "Stdev = " << stdev << endl; 
     
     epsilon = 1.645 * M_SQRT2 * sqrt(total_sites) * stdev;
-    
+    //cout << "NO-RELL epsilon " << epsilon << endl;
   }
 
   return epsilon;
