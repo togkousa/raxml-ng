@@ -96,7 +96,9 @@ public:
   bool msa_error_blo;
   bool kh_test;
   bool sampling_noise;
-  bool noise_rell;
+  int  sampling_noise_mode;
+  bool modified_version;
+  bool count_spr_moves;
 
   unsigned int num_searches;
   unsigned long long terrace_maxsize;

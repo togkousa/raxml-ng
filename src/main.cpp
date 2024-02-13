@@ -2776,7 +2776,12 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm, DifficultyP
         } */
       
       } else{
-        optimizer.optimize_topology(*treeinfo, cm);
+
+        if(optimizer.noise_quantification_mode() || opts.modified_version)
+          optimizer.optimize_topology_noise(*treeinfo, cm);
+        else
+          optimizer.optimize_topology(*treeinfo, cm);
+        
         LOG_PROGR << endl;
         LOG_WORKER_TS(log_level) << "ML tree search #" << start_tree_num <<
                             ", logLikelihood: " << FMT_LH(checkp.loglh()) << endl;

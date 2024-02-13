@@ -89,6 +89,7 @@ static struct option long_options[] =
   {"msa-error-randomized", required_argument, 0, 0 },  /*  65 */
   {"msa-error-blo",     required_argument, 0, 0 },  /*  66 */
   {"sampling-noise",     required_argument, 0, 0 },  /*  67 */
+  {"count-spr-moves",     required_argument, 0, 0 },  /*  68 */
   { 0, 0, 0, 0 }
 };
 
@@ -322,7 +323,9 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.msa_error_randomized = false;
   opts.msa_error_blo = false;
   opts.sampling_noise = false;
-  opts.noise_rell = false;
+  opts.sampling_noise_mode = -1;
+  opts.modified_version = false;
+  opts.count_spr_moves = false;
   
   /* bootstrapping / bootstopping */
   opts.bs_metrics.push_back(BranchSupportMetric::fbp);
@@ -850,6 +853,10 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
               opts.kh_test = true;
             else if (eopt == "kh-test-off")
               opts.kh_test = false;
+            else if (eopt == "modified-version-on")
+              opts.modified_version = true;
+            else if (eopt == "modified-version-off")
+              opts.modified_version = false;
             else if (eopt == "compat-v11")
             {
               opts.use_spr_fastclv = false;
@@ -1049,13 +1056,23 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         break;
       
       case 67:
+        /* 0: rell, 1: no-rell, 2: kh*/
         opts.sampling_noise = true;
         if (strcasecmp(optarg, "rell") == 0) {
-          opts.noise_rell = true;
+          opts.sampling_noise_mode = 0;
         } else if (strcasecmp(optarg, "norell") == 0) {
-          opts.noise_rell = false;
+          opts.sampling_noise_mode = 1;
+        } else if (strcasecmp(optarg, "KH") == 0) {
+          opts.sampling_noise_mode = 2;
         }
+        break;
 
+      case 68:
+        if (strcasecmp(optarg, "on") == 0) 
+          opts.count_spr_moves = true;
+        else if (strcasecmp(optarg, "off") == 0) 
+          opts.count_spr_moves = false;
+        
         break;
 
       default:

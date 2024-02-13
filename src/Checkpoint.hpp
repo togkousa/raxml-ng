@@ -20,7 +20,7 @@ enum class CheckpointStep
   start,
   brlenOpt,
   modOpt1,
-  radiusDetect,
+  radiusDetectOrNNI,
   modOpt2,
   fastSPR,
   modOpt3,

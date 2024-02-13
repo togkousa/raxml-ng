@@ -21,7 +21,8 @@ Optimizer::Optimizer (const Options &opts) :
     _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), 
     _msa_error_rate(opts.msa_error_rate),
     _msa_error_randomized(opts.msa_error_randomized), _msa_error_blo(opts.msa_error_blo),
-    _sampling_noise(opts.sampling_noise), _noise_rell(opts.noise_rell) , _seed(opts.random_seed)
+    _sampling_noise(opts.sampling_noise), _sampling_noise_mode(opts.sampling_noise_mode) , _seed(opts.random_seed),
+    _count_spr_moves(opts.count_spr_moves)
 {
 } 
 
@@ -79,12 +80,232 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   int& iter = search_state.iteration;
   spr_round_params& spr_params = search_state.spr_params;
   int& best_fast_radius = search_state.fast_spr_radius;
+
   spr_params.lh_epsilon_brlen_full = _lh_epsilon;
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
 
-  // msa-error-rate configuration
+  unsigned long int total_moves = 0, increasing_moves = 0;
+  spr_params.total_moves = _count_spr_moves ? &total_moves : nullptr;
+  spr_params.increasing_moves = _count_spr_moves ? &increasing_moves : nullptr; 
+
+  CheckpointStep resume_step = search_state.step;
+
+  /* Compute initial LH of the starting tree */
+  loglh = treeinfo.loglh();
+
+  auto do_step = [&search_state,resume_step](CheckpointStep step) -> bool
+      {
+        if (step >= resume_step)
+        {
+          search_state.step = step;
+          return true;
+        }
+        else
+          return false;;
+      };
+
+  if (do_step(CheckpointStep::brlenOpt))
+  {
+    cm.update_and_write(treeinfo);
+    LOG_PROGRESS(loglh) << "Initial branch length optimization" << endl;
+    loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
+  }
+
+  /* Initial fast model optimization */
+  if (do_step(CheckpointStep::modOpt1))
+  {
+    cm.update_and_write(treeinfo);
+    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << fast_modopt_eps << ")" << endl;
+    loglh = optimize_model(treeinfo, fast_modopt_eps);
+
+    /* start spr rounds from the beginning */
+    iter = 0;
+  }
+
+  // do SPRs
+  const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
+  const int radius_step = 5;
+
+//  treeinfo->counter = 0;
+
+  if (_spr_radius > 0)
+    best_fast_radius = _spr_radius;
+  else
+  {
+    /* auto detect best radius for fast SPRs */
+
+    if (do_step(CheckpointStep::radiusDetectOrNNI))
+    {
+      if (iter == 0)
+      {
+        spr_params.thorough = 0;
+        spr_params.radius_min = 1;
+        best_fast_radius = spr_params.radius_max = 5;
+        spr_params.ntopol_keep = 0;
+        spr_params.subtree_cutoff = 0.;
+      }
+
+      double best_loglh = loglh;
+
+      while (spr_params.radius_min < radius_limit)
+      {
+        cm.update_and_write(treeinfo);
+
+        ++iter;
+        LOG_PROGRESS(best_loglh) << "AUTODETECT spr round " << iter << " (radius: " <<
+            spr_params.radius_max << ")" << endl;
+        
+        loglh = treeinfo.spr_round(spr_params);
+
+        if (loglh - best_loglh > 0.1)
+        {
+          /* LH improved, try to increase the radius */
+          best_fast_radius = spr_params.radius_max;
+          spr_params.radius_min += radius_step;
+          spr_params.radius_max += radius_step;
+          best_loglh = loglh;
+        }
+        else
+          break;
+      }
+    }
+  }
+
+  LOG_PROGRESS(loglh) << "SPR radius for FAST iterations: " << best_fast_radius << " (" <<
+                 (_spr_radius > 0 ? "user-specified" : "autodetect") << ")" << endl;
+
+  if (do_step(CheckpointStep::modOpt2))
+  {
+    cm.update_and_write(treeinfo);
+
+    /* optimize model parameters a bit more thoroughly */
+    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " <<
+                                                            interim_modopt_eps << ")" << endl;
+    loglh = optimize_model(treeinfo, interim_modopt_eps);
+
+    /* reset iteration counter for fast SPRs */
+    iter = 0;
+
+    /* initialize search params */
+    spr_params.thorough = 0;
+    spr_params.radius_min = 1;
+    spr_params.radius_max = best_fast_radius;
+    spr_params.ntopol_keep = 20;
+    spr_params.subtree_cutoff = _spr_cutoff;
+    spr_params.reset_cutoff_info(loglh);
+  }
+
+  double old_loglh;
+
+  if (do_step(CheckpointStep::fastSPR))
+  {
+    do
+    {
+      cm.update_and_write(treeinfo);
+      ++iter;
+      old_loglh = loglh;
+      LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
+          " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
+      loglh = treeinfo.spr_round(spr_params);
+
+      /* optimize ALL branches */
+      loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
+    }
+    while (loglh - old_loglh > _lh_epsilon);
+  }
+
+  if (do_step(CheckpointStep::modOpt3))
+  {
+    cm.update_and_write(treeinfo);
+    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << 1.0 << ")" << endl;
+    loglh = optimize_model(treeinfo, 1.0);
+
+    /* init slow SPRs */
+    spr_params.thorough = 1;
+    spr_params.radius_min = 1;
+    spr_params.radius_max = radius_step;
+    iter = 0;
+  }
+
+  if (do_step(CheckpointStep::slowSPR))
+  {
+    do
+    {
+      cm.update_and_write(treeinfo);
+      ++iter;
+      old_loglh = loglh;
+      LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
+          " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
+      loglh = treeinfo.spr_round(spr_params);
+
+      /* optimize ALL branches */
+      loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
+
+      bool impr = (loglh - old_loglh > _lh_epsilon);
+      if (impr)
+      {
+        /* got improvement in thorough mode: reset min radius to 1 */
+        spr_params.radius_min = 1;
+        /* reset max radius to 5; or maybe better keep old value? */
+        spr_params.radius_max = radius_step;
+      }
+      else
+      {
+        /* no improvement in thorough mode: set min radius to old max,
+         * and increase max radius by the step */
+        spr_params.radius_min = spr_params.radius_max + 1;
+        spr_params.radius_max += radius_step;
+      }
+    }
+    while (spr_params.radius_min >= 0 && spr_params.radius_min < radius_limit);
+  }
+
+  /* Final thorough model optimization */
+  if (do_step(CheckpointStep::modOpt4))
+  {
+    cm.update_and_write(treeinfo);
+    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
+    loglh = optimize_model(treeinfo, final_modopt_eps);
+  }
+
+  if (do_step(CheckpointStep::finish))
+    cm.update_and_write(treeinfo);
+
+  return loglh;
+}
+
+double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager& cm){
+
+  // delete
+  //int delete_file_counter = 1;
+  //std::string delete_file = "../persite_lnl_";
+
+  const double fast_modopt_eps = 10.;
+  const double interim_modopt_eps = 3.;
+  const double final_modopt_eps = 0.1;
+
+  SearchState local_search_state = cm.search_state();
+  auto& search_state = ParallelContext::group_master_thread() ? cm.search_state() : local_search_state;
+  ParallelContext::barrier();
+
+  /* set references such that we can work directly with checkpoint values */
+  double &loglh = search_state.loglh;
+  int& iter = search_state.iteration;
+  spr_round_params& spr_params = search_state.spr_params;
+  int& best_fast_radius = search_state.fast_spr_radius;
+  spr_params.lh_epsilon_brlen_full = _lh_epsilon;
+  spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
+
+  unsigned long int total_moves = 0, increasing_moves = 0;
+  spr_params.total_moves = _count_spr_moves ? &total_moves : nullptr;
+  spr_params.increasing_moves = _count_spr_moves ? &increasing_moves : nullptr;
+
+  // msa-error-rate configuration - Noise quantification 
   std::shared_ptr<MSAErrorHandler> msa_error_handler;
-  double **persite_lnl;
+  double **persite_lnl = initialize_persite_vector(treeinfo);
+  double **persite_lnl_new = initialize_persite_vector(treeinfo);
+  bool use_kh_like = (_sampling_noise && (_sampling_noise_mode == 2));
+  corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
 
   if(_msa_error_rate){
 
@@ -133,19 +354,34 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if(_sampling_noise){
 
-    LOG_PROGRESS(loglh) << "Noise Sampling Using the " << (_noise_rell ? "RELL" : "NO-RELL") << " apporach." << endl;
+    string approach;
+    switch (_sampling_noise_mode)
+    {
+      case 0:
+        approach = "RELL";
+        break;
+      
+      case 1:
+        approach = "NO-RELL";
+        break;
+
+      case 2:
+        approach = "KH-like";
+        break;
+      
+      default:
+        break;
+    }
+
+    LOG_PROGRESS(loglh) << "Noise Sampling Using the " << approach << " apporach." << endl;
     assert(_msa_error_rate == 0);
-    unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
     
-    persite_lnl = new double*[partition_count];
-    for (unsigned int part = 0; part<partition_count; part++)
-      persite_lnl[part] = new double[treeinfo.pll_treeinfo().partitions[part]->sites];
-    
-    corax_treeinfo_t* tmp_treeinfo = &treeinfo.pll_treeinfo_unconst();
     loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl);
-    _lh_epsilon = sampling_noise_epsilon(tmp_treeinfo, persite_lnl, loglh, _noise_rell);
     
-    LOG_PROGRESS(loglh) << (_noise_rell ? "RELL" : "NO-RELL") << " apporach. Epsilon = " << _lh_epsilon << endl;
+    if(_sampling_noise_mode == 0 || _sampling_noise_mode == 1){
+      _lh_epsilon = sampling_noise_epsilon(tmp_treeinfo, persite_lnl, loglh, _sampling_noise_mode);
+      LOG_PROGRESS(loglh) << approach << " apporach. Epsilon = " << _lh_epsilon << endl;
+    }
   }
 
   // Do it once here !!!
@@ -163,7 +399,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   {
     /* auto detect best radius for fast SPRs */
 
-    if (do_step(CheckpointStep::radiusDetect))
+    if (do_step(CheckpointStep::radiusDetectOrNNI))
     {
       if (iter == 0)
       {
@@ -240,11 +476,29 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
       old_loglh = loglh;
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
-          " spr round " << iter << " (radius: " << spr_params.radius_max << "), epsilon = " << epsilon << endl;
+          " spr round " << iter << " (radius: " << spr_params.radius_max << ")";
+
+      if(!use_kh_like) 
+        std::cout << ", epsilon = " << epsilon << endl;
+      else
+        std::cout << endl;
+
       loglh = treeinfo.spr_round(spr_params);
 
       /* optimize ALL branches */
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
+
+      if(use_kh_like){
+        
+        loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
+        epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
+        LOG_PROGRESS(old_loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+
+        // swap
+        double ** tmp = persite_lnl;
+        persite_lnl = persite_lnl_new;
+        persite_lnl_new = tmp;
+      }
 
     }
     while (loglh - old_loglh > epsilon);
@@ -256,10 +510,12 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << 1.0 << ")" << endl;
     loglh = optimize_model(treeinfo, 1.0);
 
+    if(use_kh_like) loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl);
+
     /* init slow SPRs */
     spr_params.thorough = 1;
     spr_params.radius_min = 1;
-    spr_params.radius_max = 10;
+    spr_params.radius_max = 10;   
     iter = 0;
   }
   
@@ -277,9 +533,29 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
       old_loglh = loglh;
 
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
-          " spr round " << iter << " (radius: " << spr_params.radius_max << "), epsilon = " << epsilon << endl;
+          " spr round " << iter << " (radius: " << spr_params.radius_max << ")";
+      
+      if(!use_kh_like) 
+        std::cout << ", epsilon = " << epsilon << endl;
+      else
+        std::cout << endl;
+
       loglh = treeinfo.spr_round(spr_params);
       loglh = treeinfo.optimize_branches(_lh_epsilon, 1);
+
+      if(use_kh_like){
+
+        // cout << "Hey op! " << endl;
+        
+        loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
+        epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
+        LOG_PROGRESS(old_loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+
+        // swap
+        double ** tmp = persite_lnl;
+        persite_lnl = persite_lnl_new;
+        persite_lnl_new = tmp;
+      }
 
       impr = (loglh - old_loglh > epsilon);
       /* if (impr)
@@ -311,13 +587,8 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false, fast_modopt_eps, _msa_error_blo);
 
   if(_sampling_noise){
-    
-    unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
-    for (unsigned int part = 0; part<partition_count; part++)
-      delete[] persite_lnl[part];
-
-    delete[] persite_lnl;
-
+    free_persite_vector(treeinfo, persite_lnl);
+    free_persite_vector(treeinfo, persite_lnl_new);
   }
 
   return loglh;
@@ -578,7 +849,9 @@ int Optimizer::adaptive_slow_spr_radius(double difficulty){
   }
 }
 
-double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** persite_lnl, double loglh, bool rell){
+double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** persite_lnl, double loglh, int sampling_noise_mode){
+
+  assert(sampling_noise_mode == 0 || sampling_noise_mode == 1);
 
   double epsilon = 0;
   unsigned int total_sites = 0;
@@ -588,7 +861,7 @@ double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** pe
 
   for(part = 0; part<partition_count; part++) total_sites += treeinfo->partitions[part]->sites;
 
-  if(rell) {
+  if(sampling_noise_mode == 0) {
 
     srand(_seed);
     int pIndex, sIndex, exp;
@@ -631,7 +904,7 @@ double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** pe
 
     //cout << "RELL epsilon " << epsilon << endl;
 
-  } else {
+  } else if (sampling_noise_mode == 1) {
 
     double stdev = 0;
     double mean = loglh / total_sites;
@@ -648,3 +921,78 @@ double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** pe
 
   return epsilon;
 }
+
+double Optimizer::kh_like(TreeInfo& treeinfo, double** persite_lnl, double** persite_lnl_new){
+
+  double epsilon;
+  unsigned int total_sites = 0;
+
+  unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
+  unsigned int part, i, pos = 0;
+
+  for(part = 0; part<partition_count; part++) total_sites += treeinfo.pll_treeinfo().partitions[part]->sites;
+
+  double* logl_diffs = new double[total_sites];
+  double mean = 0;
+  
+  for(part = 0; part < partition_count; ++part){
+    unsigned int part_sites = treeinfo.pll_treeinfo().partitions[part]->sites;
+    for(i = 0; i<part_sites; ++i){
+      logl_diffs[pos] = persite_lnl_new[part][i] - persite_lnl[part][i];
+      mean += logl_diffs[pos];
+      pos++;
+    }
+  }
+
+  mean = mean / total_sites;
+
+  double stdev = 0;
+  
+  for (pos = 0; pos < total_sites; ++pos)
+    stdev += pow(logl_diffs[pos] - mean, 2);
+
+  stdev = sqrt(stdev / total_sites);
+  
+  epsilon = 1.645 * sqrt(total_sites) * stdev;
+
+  delete[] logl_diffs;
+  return epsilon;
+}
+
+double ** Optimizer::initialize_persite_vector(TreeInfo& treeinfo){
+
+  unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
+  double ** persite_lnl = new double*[partition_count];
+  
+  for (unsigned int part = 0; part<partition_count; part++)
+    persite_lnl[part] = new double[treeinfo.pll_treeinfo().partitions[part]->sites];
+  
+  return persite_lnl;
+}
+
+void Optimizer::free_persite_vector(TreeInfo& treeinfo, double** persite_lnl){
+
+  unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
+  
+  for (unsigned int part = 0; part<partition_count; part++)
+    delete[] persite_lnl[part];
+
+  delete[] persite_lnl;
+}
+
+/* 
+void Optimizer::delete_save_to_file(std::string filename, int counter, TreeInfo& treeinfo, double ** persite_lnl){
+
+  std::string filename_new = filename + std::to_string(counter);
+  ofstream myfile (filename_new);
+  if (myfile.is_open())
+  {
+    unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
+    for (unsigned int part = 0; part<partition_count; part++)
+      for(int i = 0; i< treeinfo.pll_treeinfo().partitions[part]->sites; ++i)
+        myfile << persite_lnl[part][i] << " " ;
+
+    myfile.close();
+  }
+
+} */
