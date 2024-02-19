@@ -298,7 +298,7 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.use_old_constraint = false;
 
   /* disable incremental CLV updates across pruned subtrees in SPR rounds */
-  opts.use_spr_fastclv = false;
+  opts.use_spr_fastclv = true;
 
   /* optimize model and branch lengths */
   opts.optimize_model = true;
