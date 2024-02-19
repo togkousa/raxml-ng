@@ -7,6 +7,7 @@
 #define _USE_MATH_DEFINES 
 #include <cmath>
 
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 /* 
 #include <thread>         // std::thread
@@ -492,6 +493,7 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
         
         loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
         epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
+        epsilon = MAX(epsilon, 10);
         LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
 
         // swap
@@ -549,6 +551,7 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
         
         loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
         epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
+        epsilon = MAX(10, epsilon);
         LOG_PROGRESS(old_loglh) << "KH-like criterion epsilon = " << epsilon << endl;
 
         // swap
@@ -586,10 +589,8 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
   if(_msa_error_rate && _msa_error_file.length() > 0)
     msa_error_handler->msa_error_dist(treeinfo, dist_size, loglh, false, fast_modopt_eps, _msa_error_blo);
 
-  if(_sampling_noise){
-    free_persite_vector(treeinfo, persite_lnl);
-    free_persite_vector(treeinfo, persite_lnl_new);
-  }
+  free_persite_vector(treeinfo, persite_lnl);
+  free_persite_vector(treeinfo, persite_lnl_new);
 
   return loglh;
 }
@@ -979,20 +980,3 @@ void Optimizer::free_persite_vector(TreeInfo& treeinfo, double** persite_lnl){
 
   delete[] persite_lnl;
 }
-
-/* 
-void Optimizer::delete_save_to_file(std::string filename, int counter, TreeInfo& treeinfo, double ** persite_lnl){
-
-  std::string filename_new = filename + std::to_string(counter);
-  ofstream myfile (filename_new);
-  if (myfile.is_open())
-  {
-    unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
-    for (unsigned int part = 0; part<partition_count; part++)
-      for(int i = 0; i< treeinfo.pll_treeinfo().partitions[part]->sites; ++i)
-        myfile << persite_lnl[part][i] << " " ;
-
-    myfile.close();
-  }
-
-} */
