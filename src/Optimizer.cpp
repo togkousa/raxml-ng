@@ -451,6 +451,7 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
                                                             interim_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, interim_modopt_eps);
 
+    if(use_kh_like) loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl);
     /* reset iteration counter for fast SPRs */
     iter = 0;
 
