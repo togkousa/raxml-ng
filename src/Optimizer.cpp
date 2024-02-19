@@ -553,7 +553,7 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
         loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
         epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
         epsilon = MAX(10, epsilon);
-        LOG_PROGRESS(old_loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+        LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
 
         // swap
         double ** tmp = persite_lnl;
