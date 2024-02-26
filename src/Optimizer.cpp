@@ -6,8 +6,9 @@ using namespace std;
 Optimizer::Optimizer (const Options &opts) :
     _lh_epsilon(opts.lh_epsilon), _lh_epsilon_brlen_triplet(opts.lh_epsilon_brlen_triplet), 
     _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
-    _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance)
+    _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), _stop_round(opts.stop_round)
 {
+  _force_stop = opts.stop_round > 0 ? true : false;
 }
 
 Optimizer::~Optimizer ()
@@ -69,6 +70,11 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
 
   CheckpointStep resume_step = search_state.step;
+  
+  // do SPRs
+  const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
+  const int radius_step = 5;
+  int chkp_counter = 0;
 
   /* Compute initial LH of the starting tree */
   loglh = treeinfo.loglh();
@@ -87,14 +93,21 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
   if (do_step(CheckpointStep::brlenOpt))
   {
     cm.update_and_write(treeinfo, parted_msa);
+    chkp_counter++;
+    if(_force_stop && chkp_counter == _stop_round) goto force_exit;
+
     LOG_PROGRESS(loglh) << "Initial branch length optimization" << endl;
     loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
+
   }
 
   /* Initial fast model optimization */
   if (do_step(CheckpointStep::modOpt1))
   {
     cm.update_and_write(treeinfo, parted_msa);
+    chkp_counter++;
+    if(_force_stop && chkp_counter == _stop_round) goto force_exit;
+
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << fast_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, fast_modopt_eps);
 
@@ -102,9 +115,6 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
     iter = 0;
   }
 
-  // do SPRs
-  const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
-  const int radius_step = 5;
 
 //  treeinfo->counter = 0;
 
@@ -130,6 +140,8 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
       while (spr_params.radius_min < radius_limit)
       {
         cm.update_and_write(treeinfo, parted_msa);
+        chkp_counter++;
+        if(_force_stop && chkp_counter == _stop_round) goto force_exit;
 
         ++iter;
         LOG_PROGRESS(best_loglh) << "AUTODETECT spr round " << iter << " (radius: " <<
@@ -156,6 +168,8 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
   if (do_step(CheckpointStep::modOpt2))
   {
     cm.update_and_write(treeinfo, parted_msa);
+    chkp_counter++;
+    if(_force_stop && chkp_counter == _stop_round) goto force_exit;
 
     /* optimize model parameters a bit more thoroughly */
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " <<
@@ -181,6 +195,9 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
     do
     {
       cm.update_and_write(treeinfo, parted_msa);
+      chkp_counter++;
+      if(_force_stop && chkp_counter == _stop_round) goto force_exit;
+
       ++iter;
       old_loglh = loglh;
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
@@ -196,6 +213,9 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
   if (do_step(CheckpointStep::modOpt3))
   {
     cm.update_and_write(treeinfo, parted_msa);
+    chkp_counter++;
+    if(_force_stop && chkp_counter == _stop_round) goto force_exit;
+
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << 1.0 << ")" << endl;
     loglh = optimize_model(treeinfo, 1.0);
 
@@ -211,6 +231,9 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
     do
     {
       cm.update_and_write(treeinfo, parted_msa);
+      chkp_counter++;
+      if(_force_stop && chkp_counter == _stop_round) goto force_exit;
+
       ++iter;
       old_loglh = loglh;
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
@@ -251,6 +274,24 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
     cm.update_and_write(treeinfo, parted_msa);
 
   return loglh;
+
+force_exit:
+  loglh = treeinfo.loglh();
+  LOG_PROGRESS(loglh) << "Force exit enabledat round " << chkp_counter << endl;
+
+  /* Final thorough model optimization */
+  if (do_step(CheckpointStep::modOpt4))
+  {
+    cm.update_and_write(treeinfo, parted_msa);
+    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
+    loglh = optimize_model(treeinfo, final_modopt_eps);
+  }
+
+  if (do_step(CheckpointStep::finish))
+    cm.update_and_write(treeinfo, parted_msa);
+
+  return loglh;
+
 }
 
 double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa, double difficulty)

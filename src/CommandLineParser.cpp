@@ -84,6 +84,7 @@ static struct option long_options[] =
   {"diff_pred_trees",    required_argument, 0, 0},   /*  60 */
   {"nni-tolerance",      required_argument, 0, 0 },  /*  61 */
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
+  {"stop-round",        required_argument, 0, 0 },  /*  63 */
   { 0, 0, 0, 0 }
 };
 
@@ -309,6 +310,7 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   /* default: nni parameters */
   opts.nni_tolerance = 0.1;
   opts.nni_epsilon = 0.1;
+  opts.stop_round = -1;
 
   /* bootstrapping / bootstopping */
   opts.bs_metrics.push_back(BranchSupportMetric::fbp);
@@ -995,6 +997,14 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         {
           throw InvalidOptionValueException("Invalid NNI epsilon  : " + string(optarg) +
                                             ", please provide a positive real number!\n");
+        }
+        break;
+      
+      case 63: /* force stop at round i */
+        if (sscanf(optarg, "%u", &opts.stop_round) != 1 || opts.stop_round <= 0)
+        {
+          throw InvalidOptionValueException("Invalid stopping round " + string(optarg) +
+                                            ", please provide a positive integer number!");
         }
         break;
               

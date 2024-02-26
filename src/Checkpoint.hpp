@@ -69,10 +69,10 @@ struct CheckpointFile
 {
   CheckpointFile() : version(RAXML_CKP_VERSION), elapsed_seconds(0.), consumed_wh(0.), best_tree_counter(0), best_model_counter(0) {}
 
-  int best_tree_counter, best_model_counter;
   int version;
   double elapsed_seconds;
   double consumed_wh;
+  int best_tree_counter, best_model_counter;
   Options opts;
 
   std::vector<Checkpoint> checkp_list;

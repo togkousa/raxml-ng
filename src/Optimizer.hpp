@@ -30,6 +30,9 @@ private:
   double _nni_epsilon;
   double _nni_tolerance;
 
+  bool _force_stop;
+  int _stop_round;
+
   // functions for adaptive mode
   double convergence_rate(CheckpointManager& cm, double test_loglh);
   bool first_search_done(CheckpointManager& cm);
