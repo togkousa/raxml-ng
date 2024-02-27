@@ -2,12 +2,14 @@
 #include "topology/RFDistCalculator.hpp"
 #include "adaptive/MSAErrorHandler.hpp"
 #include "adaptive/KHtester.hpp"
+#include "adaptive/NormalDistribution.hpp"
 #include <memory>
 
 #define _USE_MATH_DEFINES 
 #include <cmath>
 
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
 
 /* 
 #include <thread>         // std::thread
@@ -465,6 +467,7 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
   }
 
   double old_loglh;
+  bool impr = true;
 
   if (do_step(CheckpointStep::fastSPR))
   {
@@ -488,18 +491,31 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
       if(use_kh_like){
         
         loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
-        epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
-        epsilon = MAX(epsilon, 10);
-        LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+        
+        if(spr_params.increasing_moves){
+          
+          double p_value = kh_like(treeinfo, persite_lnl, persite_lnl_new, spr_params.increasing_moves);
+          LOG_PROGRESS(loglh) << "KH-like multiple-testing p-value = " << p_value << endl;
+          impr = (p_value < 0.05);
+
+        } else {
+
+          epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
+          epsilon = MAX(epsilon, 10);
+          LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+          impr = (loglh - old_loglh > epsilon);
+        }
 
         // swap
         double ** tmp = persite_lnl;
         persite_lnl = persite_lnl_new;
         persite_lnl_new = tmp;
-      }
+      } else {
 
+        impr = (loglh - old_loglh > epsilon);
+      }
     }
-    while (loglh - old_loglh > epsilon);
+    while (impr);
   }
 
   if (do_step(CheckpointStep::modOpt3))
@@ -517,7 +533,6 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
     iter = 0;
   }
   
-  bool impr = true;
   if (do_step(CheckpointStep::slowSPR))
   {
     double epsilon;
@@ -541,27 +556,28 @@ double Optimizer::optimize_topology_noise(TreeInfo& treeinfo, CheckpointManager&
         // cout << "Hey op! " << endl;
         
         loglh = corax_treeinfo_compute_loglh_persite(tmp_treeinfo, 1, 0, persite_lnl_new);
-        epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
-        epsilon = MAX(10, epsilon);
-        LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+        
+        if(spr_params.increasing_moves){
+          
+          double p_value = kh_like(treeinfo, persite_lnl, persite_lnl_new, spr_params.increasing_moves);
+          LOG_PROGRESS(loglh) << "KH-like multiple-testing p-value = " << p_value << endl;
+          impr = (p_value < 0.05);
 
+        } else {
+          epsilon = kh_like(treeinfo, persite_lnl, persite_lnl_new);
+          epsilon = MAX(10, epsilon);
+          LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+          impr = (loglh - old_loglh > epsilon);
+        }
+        
         // swap
         double ** tmp = persite_lnl;
         persite_lnl = persite_lnl_new;
         persite_lnl_new = tmp;
-      }
+      } else {
 
-      impr = (loglh - old_loglh > epsilon);
-      /* if (impr)
-      {
-        spr_params.radius_min = 1;
-        spr_params.radius_max = radius_step;
+        impr = (loglh - old_loglh > epsilon);
       }
-      else
-      {
-        spr_params.radius_min = spr_params.radius_max + 1;
-        spr_params.radius_max += radius_step;
-      } */
     }
     while (impr);
   }
@@ -914,9 +930,9 @@ double Optimizer::sampling_noise_epsilon(corax_treeinfo_t* treeinfo, double** pe
   return epsilon;
 }
 
-double Optimizer::kh_like(TreeInfo& treeinfo, double** persite_lnl, double** persite_lnl_new){
+double Optimizer::kh_like(TreeInfo& treeinfo, double** persite_lnl, double** persite_lnl_new, unsigned long* increasing_moves){
 
-  double epsilon;
+  double ret_val = 0, L = 0, NL = 0;
   unsigned int total_sites = 0;
 
   unsigned int partition_count = treeinfo.pll_treeinfo().partition_count;
@@ -930,6 +946,8 @@ double Optimizer::kh_like(TreeInfo& treeinfo, double** persite_lnl, double** per
   for(part = 0; part < partition_count; ++part){
     unsigned int part_sites = treeinfo.pll_treeinfo().partitions[part]->sites;
     for(i = 0; i<part_sites; ++i){
+      NL += persite_lnl_new[part][i];
+      L += persite_lnl[part][i];
       logl_diffs[pos] = persite_lnl_new[part][i] - persite_lnl[part][i];
       mean += logl_diffs[pos];
       pos++;
@@ -945,10 +963,26 @@ double Optimizer::kh_like(TreeInfo& treeinfo, double** persite_lnl, double** per
 
   stdev = sqrt(stdev / total_sites);
   
-  epsilon = 1.645 * sqrt(total_sites) * stdev;
+  // multiple testing correction
+  if(increasing_moves){
+
+    if( (*increasing_moves) == 0 || stdev < 1e-9){
+      ret_val = 1;
+      
+    } else {
+      double x = (NL - L) / (stdev * sqrt(total_sites));
+      StandardNormalDistribution ndist;
+      ret_val = (*increasing_moves)*(1 - ndist.cdf(x));
+      ret_val = MIN(ret_val, 1);
+    }
+
+  } else {
+    
+    ret_val = 1.645 * sqrt(total_sites) * stdev;
+  }
 
   delete[] logl_diffs;
-  return epsilon;
+  return ret_val;
 }
 
 double ** Optimizer::initialize_persite_vector(TreeInfo& treeinfo){

@@ -62,7 +62,7 @@ private:
   double **initialize_persite_vector(TreeInfo& treeinfo);
   void free_persite_vector(TreeInfo& treeinfo, double ** persite_lnl);
 
-  double kh_like(TreeInfo& treeinfo, double** persite_lnl, double** persite_lnl_new);
+  double kh_like(TreeInfo& treeinfo, double** persite_lnl, double** persite_lnl_new, unsigned long* increasing_moves = nullptr);
 
   // void delete_save_to_file(std::string filename, int counter, TreeInfo& treeinfo, double ** persite_lnl);
 

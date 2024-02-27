@@ -401,7 +401,7 @@ double TreeInfo::spr_round(spr_round_params& params)
   libpll_check_error("ERROR in SPR round");
 
   if(params.total_moves)
-    LOG_PROGRESS(loglh) << "SPR moves = " << (*params.total_moves) << 
+    LOG_DEBUG << "SPR moves = " << (*params.total_moves) << 
       ", Increasing moves = " << (*params.increasing_moves) << endl; 
 
   assert(isfinite(loglh) && loglh);
