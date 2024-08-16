@@ -393,7 +393,11 @@ double TreeInfo::spr_round(spr_round_params& params)
                                params.subtree_cutoff > 0. ? &params.cutoff_info : nullptr,
                                params.subtree_cutoff, 
                                params.lh_epsilon_brlen_triplet,
-                               _use_spr_fastclv);
+                               _use_spr_fastclv,
+                               nullptr, 
+                               nullptr,
+                               params.intermediate_trees_file.size() > 0 ? 
+                                  params.intermediate_trees_file.c_str() : nullptr);
 
   libpll_check_error("ERROR in SPR round");
 

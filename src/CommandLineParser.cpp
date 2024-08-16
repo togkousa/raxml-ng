@@ -85,6 +85,7 @@ static struct option long_options[] =
   {"nni-tolerance",      required_argument, 0, 0 },  /*  61 */
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
   {"stop-round",        required_argument, 0, 0 },  /*  63 */
+  {"chkpt-method",        required_argument, 0, 0 },  /* 64 */
   { 0, 0, 0, 0 }
 };
 
@@ -311,6 +312,7 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.nni_tolerance = 0.1;
   opts.nni_epsilon = 0.1;
   opts.stop_round = -1;
+  opts.checkpoint_method = 0;
 
   /* bootstrapping / bootstopping */
   opts.bs_metrics.push_back(BranchSupportMetric::fbp);
@@ -1005,6 +1007,16 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         {
           throw InvalidOptionValueException("Invalid stopping round " + string(optarg) +
                                             ", please provide a positive integer number!");
+        }
+        break;
+      
+      case 64: /* 0: standard checkpoints, 
+                  1: save checkpoints to different files 
+                  2: save all intermediate SPR trees to a single file*/
+        if (sscanf(optarg, "%u", &opts.checkpoint_method) != 1 || opts.checkpoint_method < 0 || opts.checkpoint_method > 2)
+        {
+          throw InvalidOptionValueException("Invalid checkpoint method: " + string(optarg) +
+                                            ", Possible input values are 0,1,2");
         }
         break;
               

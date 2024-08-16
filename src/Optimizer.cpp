@@ -52,6 +52,7 @@ void Optimizer::nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& lo
 
 double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa)
 {
+  auto const& opts = cm.checkp_file().opts;
   const double fast_modopt_eps = 10.;
   const double interim_modopt_eps = 3.;
   const double final_modopt_eps = 0.1;
@@ -68,8 +69,26 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
 
   spr_params.lh_epsilon_brlen_full = _lh_epsilon;
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
+  spr_params.intermediate_trees_file = "";
+  
+  // only master thread is saving to the sprFile
+  if(ParallelContext::group_master_thread()){
+    spr_params.intermediate_trees_file = opts.checkpoint_method == 2 ?
+      opts.output_fname("sprTrees") : "";
+  }
 
   CheckpointStep resume_step = search_state.step;
+  
+  /*
+  {
+    ParallelContext::UniqueLock lock;
+
+    cout << "Filename : " << spr_params.intermediate_trees_file 
+        << ", thread " << ParallelContext::local_thread_id() 
+        << ", size = " << spr_params.intermediate_trees_file.size() << endl;
+  }
+  getchar();
+  */
   
   // do SPRs
   const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
@@ -115,6 +134,19 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
     iter = 0;
   }
 
+  if(ParallelContext::group_master_thread()){
+    if(spr_params.intermediate_trees_file.size() > 0){
+      ofstream fio(spr_params.intermediate_trees_file, ios::trunc);
+      if (fio.is_open()){
+        fio << corax_utree_export_newick(&treeinfo.pll_utree_root(), NULL) << endl;
+        fio.close();
+      }
+      else{
+        cout << "Error opening SPR file!" << endl;
+        exit(0);
+      }
+    }
+  }
 
 //  treeinfo->counter = 0;
 

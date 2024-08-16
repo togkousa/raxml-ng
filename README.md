@@ -112,7 +112,11 @@ If still in doubt, please feel free to post to the [RAxML google group](https://
 
   5. To execute the **adaptive** version, the user needs to add the `--adaptive` option:
 
-    ./raxml-ng --adaptive --msa testDNA.fa --model GTR+G
+     `./raxml-ng --adaptive --msa testDNA.fa --model GTR+G`
+   
+  6. To print all intermediate trees that RAxML-NG visits throughout the tree search, use the `--chkpt-method 2` option:
+
+     `./raxml-ng --msa testDNA.fa --model GTR+G --tree rand{1} --chkpt-method 2`
 
   
   WARNING! The **adaptive** version has been thoroughly tested only on sequential mode.
