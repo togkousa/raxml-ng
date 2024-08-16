@@ -89,6 +89,7 @@ public:
   int diff_pred_pars_trees;
 
   int stop_round;
+  int checkpoint_method;
 
   double nni_tolerance;
   double nni_epsilon;
