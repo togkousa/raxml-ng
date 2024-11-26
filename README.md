@@ -73,10 +73,20 @@ cmake -DSTATIC_BUILD=ON -DENABLE_RAXML_SIMD=OFF -DENABLE_PLLMOD_SIMD=OFF ..
 make
 ```
 
-**Adaptive** version (currently under development):
+**Adaptive** version:
 
 ```
 git clone --recursive -b adaptive https://github.com/togkousa/raxml-ng.git
+cd raxml-ng
+mkdir build && cd build
+cmake ..
+make
+```
+
+**Stopping criteria** version:
+
+```
+git clone --recursive -b stopping-criteria https://github.com/togkousa/raxml-ng.git
 cd raxml-ng
 mkdir build && cd build
 cmake ..
