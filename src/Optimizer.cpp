@@ -52,9 +52,11 @@ void Optimizer::nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& lo
   loglh = treeinfo.nni_round(nni_params);
 }
 
-double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
+double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa)
 {
-  if(call_modified_version()) return optimize_topology_modified(treeinfo, cm);
+  if(call_modified_version()) return optimize_topology_modified(treeinfo, cm, parted_msa);
+
+  auto const& opts = cm.checkp_file().opts;
 
   const double fast_modopt_eps = 10.;
   const double interim_modopt_eps = 3.;
@@ -74,9 +76,20 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
   spr_params.total_moves = nullptr;
   spr_params.increasing_moves = nullptr;
+  spr_params.intermediate_trees_file = "";
+  
+  // only master thread is saving to the sprFile
+  if(ParallelContext::group_master_thread()){
+    spr_params.intermediate_trees_file = opts.checkpoint_method == 2 ?
+      opts.output_fname("sprTrees") : "";
+  }
 
   CheckpointStep resume_step = search_state.step;
 
+  // do SPRs
+  const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
+  const int radius_step = 5;
+  
   /* Compute initial LH of the starting tree */
   loglh = treeinfo.loglh();
 
@@ -93,7 +106,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::brlenOpt))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Initial branch length optimization" << endl;
     loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
   }
@@ -101,7 +114,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   /* Initial fast model optimization */
   if (do_step(CheckpointStep::modOpt1))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << fast_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, fast_modopt_eps);
 
@@ -109,11 +122,19 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
     iter = 0;
   }
 
-  // do SPRs
-  const int radius_limit = min(22, (int) treeinfo.pll_treeinfo().tip_count - 3 );
-  const int radius_step = 5;
-
-//  treeinfo->counter = 0;
+  if(ParallelContext::group_master_thread()){
+    if(spr_params.intermediate_trees_file.size() > 0){
+      ofstream fio(spr_params.intermediate_trees_file, ios::trunc);
+      if (fio.is_open()){
+        fio << corax_utree_export_newick(&treeinfo.pll_utree_root(), NULL) << endl;
+        fio.close();
+      }
+      else{
+        cout << "Error opening SPR file!" << endl;
+        exit(0);
+      }
+    }
+  }
 
   if (_spr_radius > 0)
     best_fast_radius = _spr_radius;
@@ -136,7 +157,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
       while (spr_params.radius_min < radius_limit)
       {
-        cm.update_and_write(treeinfo);
+        cm.update_and_write(treeinfo, parted_msa);
 
         ++iter;
         LOG_PROGRESS(best_loglh) << "AUTODETECT spr round " << iter << " (radius: " <<
@@ -162,7 +183,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::modOpt2))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
 
     /* optimize model parameters a bit more thoroughly */
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " <<
@@ -187,7 +208,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   {
     do
     {
-      cm.update_and_write(treeinfo);
+      cm.update_and_write(treeinfo, parted_msa);
       ++iter;
       old_loglh = loglh;
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
@@ -202,7 +223,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::modOpt3))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << 1.0 << ")" << endl;
     loglh = optimize_model(treeinfo, 1.0);
 
@@ -217,7 +238,7 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   {
     do
     {
-      cm.update_and_write(treeinfo);
+      cm.update_and_write(treeinfo, parted_msa);
       ++iter;
       old_loglh = loglh;
       LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
@@ -249,23 +270,25 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm)
   /* Final thorough model optimization */
   if (do_step(CheckpointStep::modOpt4))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, final_modopt_eps);
   }
 
   if (do_step(CheckpointStep::finish))
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
 
   return loglh;
 }
 
-double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm)
+double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa)
 {
   // TODO: connect the command line arguments for nni-epsilon and nni-tolerance with nni_params.lh_epsilon and 
   // nni_params.tolerance
   
-  if(call_modified_version()) return optimize_topology_modified(treeinfo, cm);
+  if(call_modified_version()) return optimize_topology_modified(treeinfo, cm, parted_msa);
+
+  auto const& opts = cm.checkp_file().opts;
 
   const double fast_modopt_eps = 10.;
   const double interim_modopt_eps = 3.;
@@ -290,6 +313,13 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
   unsigned long int total_moves = 0, increasing_moves = 0;
   spr_params.total_moves = &total_moves;
   spr_params.increasing_moves = &increasing_moves;
+  spr_params.intermediate_trees_file = "";
+  
+  // only master thread is saving to the sprFile
+  if(ParallelContext::group_master_thread()){
+    spr_params.intermediate_trees_file = opts.checkpoint_method == 2 ?
+      opts.output_fname("sprTrees") : "";
+  }
   
   vector<double *> persite_lnl = 
     criterion->get_persite_lnl(ParallelContext::group_id(), ParallelContext::local_thread_id());
@@ -336,7 +366,7 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
   /* Initial branch-length model optimization */
   if (do_step(CheckpointStep::brlenOpt))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Initial branch length optimization" << endl;
     loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
   }
@@ -344,7 +374,7 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
   /* Initial fast model optimization */
   if (do_step(CheckpointStep::modOpt1))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << fast_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, fast_modopt_eps);
 
@@ -358,6 +388,20 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
     spr_params.reset_cutoff_info(loglh);
   }
 
+  if(ParallelContext::group_master_thread()){
+    if(spr_params.intermediate_trees_file.size() > 0){
+      ofstream fio(spr_params.intermediate_trees_file, ios::trunc);
+      if (fio.is_open()){
+        fio << corax_utree_export_newick(&treeinfo.pll_utree_root(), NULL) << endl;
+        fio.close();
+      }
+      else{
+        cout << "Error opening SPR file!" << endl;
+        exit(0);
+      }
+    }
+  }
+
   double old_loglh;
   bool impr = true;
   double epsilon;
@@ -368,7 +412,7 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
     {
       epsilon = _lh_epsilon;
 
-      cm.update_and_write(treeinfo);
+      cm.update_and_write(treeinfo, parted_msa);
       ++iter;
 
       /* Computing the per-site loglh vector before the SPR round */
@@ -400,7 +444,7 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
   
   if (do_step(CheckpointStep::modOpt3))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, interim_modopt_eps);
 
@@ -418,7 +462,7 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
     {
       epsilon = _lh_epsilon ;
 
-      cm.update_and_write(treeinfo);
+      cm.update_and_write(treeinfo, parted_msa);
       ++iter;
       old_loglh = loglh;
 
@@ -452,20 +496,22 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
 
   if (do_step(CheckpointStep::modOpt4))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, final_modopt_eps);
   }
 
   if (do_step(CheckpointStep::finish))
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
 
   return loglh;
 }
 
-double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManager& cm){
+double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa){
   
   assert(_modified_version || criterion != nullptr);
+
+  auto const& opts = cm.checkp_file().opts;
 
   const double interim_modopt_eps = 3.;
   const double final_modopt_eps = 0.1;
@@ -488,7 +534,14 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
   unsigned long int total_moves = 0, increasing_moves = 0;
   spr_params.total_moves = (criterion && criterion->multi_test_correction()) ? &total_moves : nullptr;
   spr_params.increasing_moves = (criterion && criterion->multi_test_correction()) ? &increasing_moves : nullptr;
+  spr_params.intermediate_trees_file = "";
   
+  // only master thread is saving to the sprFile
+  if(ParallelContext::group_master_thread()){
+    spr_params.intermediate_trees_file = opts.checkpoint_method == 2 ?
+      opts.output_fname("sprTrees") : "";
+  }
+
   bool use_kh_like = (criterion) ? criterion->kh_test() : false;
 
   vector<double *> persite_lnl, persite_lnl_new;
@@ -556,7 +609,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
 
   if (do_step(CheckpointStep::brlenOpt))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Initial branch length optimization" << endl;
     loglh = treeinfo.optimize_branches(interim_modopt_eps, 1);
   }
@@ -564,7 +617,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
   /* Initial fast model optimization */
   if (do_step(CheckpointStep::modOpt1))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, interim_modopt_eps);
 
@@ -598,6 +651,20 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
     }
   }
 
+  if(ParallelContext::group_master_thread()){
+    if(spr_params.intermediate_trees_file.size() > 0){
+      ofstream fio(spr_params.intermediate_trees_file, ios::trunc);
+      if (fio.is_open()){
+        fio << corax_utree_export_newick(&treeinfo.pll_utree_root(), NULL) << endl;
+        fio.close();
+      }
+      else{
+        cout << "Error opening SPR file!" << endl;
+        exit(0);
+      }
+    }
+  }
+
   double old_loglh, epsilon;
   bool impr = true;
   
@@ -612,7 +679,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
     { 
       epsilon =_lh_epsilon ;
       
-      cm.update_and_write(treeinfo);
+      cm.update_and_write(treeinfo, parted_msa);
       ++iter;
 
       if(use_kh_like) criterion->compute_loglh(treeinfo, persite_lnl, true);
@@ -661,7 +728,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
 
   if (do_step(CheckpointStep::modOpt3))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, interim_modopt_eps);
 
@@ -678,7 +745,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
     {
       epsilon = _lh_epsilon ;
 
-      cm.update_and_write(treeinfo);
+      cm.update_and_write(treeinfo, parted_msa);
       ++iter;
       old_loglh = loglh;
 
@@ -726,18 +793,18 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
   /* Final thorough model optimization */
   if (do_step(CheckpointStep::modOpt4))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, final_modopt_eps);
   }
 
   if (do_step(CheckpointStep::finish))
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
   
   return loglh;
 }
 
-double Optimizer::evaluate(TreeInfo& treeinfo, CheckpointManager& cm)
+double Optimizer::evaluate(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa)
 {
   const double fast_modopt_eps = 10.;
 
@@ -764,7 +831,7 @@ double Optimizer::evaluate(TreeInfo& treeinfo, CheckpointManager& cm)
 
   if (do_step(CheckpointStep::brlenOpt))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Initial branch length optimization" << endl;
     loglh = treeinfo.optimize_branches(fast_modopt_eps, 1);
   }
@@ -772,13 +839,13 @@ double Optimizer::evaluate(TreeInfo& treeinfo, CheckpointManager& cm)
   /* Model optimization */
   if (do_step(CheckpointStep::modOpt1))
   {
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
     LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << _lh_epsilon << ")" << endl;
     loglh = optimize_model(treeinfo);
   }
 
   if (do_step(CheckpointStep::finish))
-    cm.update_and_write(treeinfo);
+    cm.update_and_write(treeinfo, parted_msa);
 
   return loglh;
 }

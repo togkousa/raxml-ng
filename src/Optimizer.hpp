@@ -18,11 +18,11 @@ public:
   double optimize_model(TreeInfo& treeinfo) { return optimize_model(treeinfo, _lh_epsilon); };
   
   // optimization routines
-  double optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm);
-  double optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm);
-  double optimize_topology_modified(TreeInfo& treeinfo, CheckpointManager& cm);
+  double optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
+  double optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
+  double optimize_topology_modified(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
   
-  double evaluate(TreeInfo& treeinfo, CheckpointManager& cm);
+  double evaluate(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
   void nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& loglh);
 
   void set_stopping_criterion(StoppingCriterion* _criterion) { criterion = _criterion; } // have to fix this

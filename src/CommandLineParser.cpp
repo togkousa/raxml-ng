@@ -80,12 +80,13 @@ static struct option long_options[] =
   {"sitelh",             no_argument, 0, 0 },        /*  55 */
   {"site-weights",       required_argument, 0, 0 },  /*  56 */
   {"bs-write-msa",       no_argument, 0, 0 },        /*  57 */
-  {"lh-epsilon-triplet", required_argument, 0, 0 },  /* 58 */
+  {"lh-epsilon-triplet", required_argument, 0, 0 },  /*  58 */
   {"adaptive",           optional_argument, 0, 0 },  /*  59 */
   {"diff_pred_trees",    required_argument, 0, 0},   /*  60 */
   {"nni-tolerance",      required_argument, 0, 0 },  /*  61 */
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
   {"stopping-criterion", required_argument, 0, 0 },  /*  63 */
+  {"chkpt-method",       required_argument, 0, 0 },  /*  64 */
   { 0, 0, 0, 0 }
 };
 
@@ -308,6 +309,7 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.stopping_rule = 3; // by default, we use the KH-multiple testing as a stopping rule
   opts.modified_version = false;
   opts.count_spr_moves = true;
+  opts.checkpoint_method = 0;
 
   /* bootstrapping / bootstopping */
   opts.bs_metrics.push_back(BranchSupportMetric::fbp);
@@ -1072,6 +1074,16 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
                                             "- sn-normal : Sampling Noise Normal apporach\n" + 
                                             "- KH : KH test\n" +
                                             "- KH-mult : KH test with multiple correction\n");
+        }
+        break;
+      
+      case 64: /* 0: standard checkpoints, 
+                  1: save checkpoints to different files 
+                  2: save all intermediate SPR trees to a single file*/
+        if (sscanf(optarg, "%u", &opts.checkpoint_method) != 1 || opts.checkpoint_method < 0 || opts.checkpoint_method > 2)
+        {
+          throw InvalidOptionValueException("Invalid checkpoint method: " + string(optarg) +
+                                            ", Possible input values are 0,1,2");
         }
         break;
               

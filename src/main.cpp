@@ -2723,6 +2723,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
   Checkpoint& checkp = cm.checkpoint();
   auto const& master_msa = *instance.parted_msa;
   auto const& opts = instance.opts;
+  auto& master_msa_unconst = *instance.parted_msa;
 
   unique_ptr<TreeInfo> treeinfo;
 
@@ -2800,7 +2801,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
         LOG_INFO_TS << "Tree #" << start_tree_num <<
             ", initial LogLikelihood: " << FMT_LH(treeinfo->loglh()) << endl;
         LOG_PROGR << endl;
-        optimizer.evaluate(*treeinfo, cm);
+        optimizer.evaluate(*treeinfo, cm, master_msa_unconst);
       }
       else
       {
@@ -2808,7 +2809,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
         if (ParallelContext::master_thread())
           cm.search_state().loglh = loglh;
 
-        cm.update_and_write(*treeinfo);
+        cm.update_and_write(*treeinfo, master_msa_unconst);
       }
 
       LOG_PROGR << endl;
@@ -2819,9 +2820,9 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
     else
     {
       if (opts.use_adaptive_search)
-        optimizer.optimize_topology_adaptive(*treeinfo, cm);
+        optimizer.optimize_topology_adaptive(*treeinfo, cm, master_msa_unconst);
       else
-        optimizer.optimize_topology(*treeinfo, cm);
+        optimizer.optimize_topology(*treeinfo, cm, master_msa_unconst);
 
       LOG_PROGR << endl;
       LOG_WORKER_TS(log_level) << "ML tree search #" << start_tree_num <<
@@ -2863,6 +2864,7 @@ void thread_infer_bootstrap(RaxmlInstance& instance, CheckpointManager& cm)
   auto const& master_msa = *instance.parted_msa;
   auto& worker = instance.get_worker();
   Checkpoint& checkp = cm.checkpoint();
+  auto& master_msa_unconst = *instance.parted_msa;
 
   unique_ptr<TreeInfo> treeinfo;
 
@@ -2987,9 +2989,9 @@ void thread_infer_bootstrap(RaxmlInstance& instance, CheckpointManager& cm)
     Optimizer optimizer(opts);
 
     if (opts.use_adaptive_search)
-      optimizer.optimize_topology_adaptive(*treeinfo, cm);
+      optimizer.optimize_topology_adaptive(*treeinfo, cm, master_msa_unconst);
     else
-      optimizer.optimize_topology(*treeinfo, cm);
+      optimizer.optimize_topology(*treeinfo, cm, master_msa_unconst);
 
     LOG_PROGR << endl;
     LOG_WORKER_TS(LogLevel::info) << "Bootstrap tree #" << *bs_num <<

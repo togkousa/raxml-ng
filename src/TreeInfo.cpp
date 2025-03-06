@@ -396,7 +396,9 @@ double TreeInfo::spr_round(spr_round_params& params)
                                params.lh_epsilon_brlen_triplet,
                                _use_spr_fastclv,
                                params.total_moves,
-                               params.increasing_moves);
+                               params.increasing_moves,
+                               params.intermediate_trees_file.size() > 0 ? 
+                                params.intermediate_trees_file.c_str() : nullptr);
 
   libpll_check_error("ERROR in SPR round");
 

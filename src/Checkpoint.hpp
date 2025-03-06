@@ -68,12 +68,14 @@ struct Checkpoint
 
 struct CheckpointFile
 {
-  CheckpointFile() : version(RAXML_CKP_VERSION), elapsed_seconds(0.), consumed_wh(0.), pythia_score(-1.) {}
+  CheckpointFile() : version(RAXML_CKP_VERSION), elapsed_seconds(0.), consumed_wh(0.), 
+                      pythia_score(-1.), best_tree_counter(0), best_model_counter(0) {}
 
   int version;
   double elapsed_seconds;
   double consumed_wh;
   double pythia_score;
+  int best_tree_counter, best_model_counter;
   Options opts;
 
   std::vector<Checkpoint> checkp_list;
@@ -87,6 +89,7 @@ struct CheckpointFile
 
   void write_tmp_tree(const Tree& tree, const std::string fname, bool append = false) const;
   void write_tmp_best_tree() const;
+  void write_tmp_best_model(PartitionedMSA& parted_msa, ModelMap& models) const;
   void write_tmp_ml_tree(const Tree& tree) const;
   void write_tmp_bs_tree(const Tree& tree) const;
 };
@@ -115,7 +118,7 @@ public:
   void enable() { _active = true; }
   void disable() { _active = false; }
 
-  void update_and_write(const TreeInfo& treeinfo);
+  void update_and_write(const TreeInfo& treeinfo, PartitionedMSA& parted_msa);
 
   void save_ml_tree();
   void save_bs_tree();

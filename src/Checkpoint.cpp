@@ -62,8 +62,23 @@ void CheckpointFile::write_tmp_tree(const Tree& tree, const std::string fname, b
 void CheckpointFile::write_tmp_best_tree() const
 {
   /* NB: do not print last-best tree in bootstrapping stage! */
+  std::string _fname = opts.checkpoint_method != 1 ? opts.tmp_best_tree_file() :
+      opts.tmp_best_tree_file() + "_" + std::to_string(best_tree_counter);
+  
   if (opts.write_interim_results && ml_trees.size() < opts.num_searches)
-    write_tmp_tree(best_tree().tree, opts.tmp_best_tree_file());
+    write_tmp_tree(best_tree().tree, _fname);
+}
+
+void CheckpointFile::write_tmp_best_model(PartitionedMSA& parted_msa, ModelMap& models) const
+{ 
+  // this code was taken from main.cpp, line 2513
+  for (size_t p = 0; p < parted_msa.part_count(); ++p)
+    parted_msa.model(p, models.at(p));
+
+  RaxmlPartitionStream model_stream(opts.best_model_file() + "_" + std::to_string(best_model_counter), true);
+  model_stream.print_model_params(true);
+  model_stream << fixed << setprecision(logger().precision(LogElement::model));
+  model_stream << parted_msa;
 }
 
 void CheckpointFile::write_tmp_ml_tree(const Tree& tree) const
@@ -239,7 +254,7 @@ void CheckpointManager::save_bs_tree()
   }
 }
 
-void CheckpointManager::update_and_write(const TreeInfo& treeinfo)
+void CheckpointManager::update_and_write(const TreeInfo& treeinfo, PartitionedMSA& parted_msa)
 {
   if (ParallelContext::master_thread())
     _updated_models.clear();
@@ -273,7 +288,13 @@ void CheckpointManager::update_and_write(const TreeInfo& treeinfo)
     if (_active)
       write();
 
+    _checkp_file.best_tree_counter++;
+    _checkp_file.best_model_counter++;
+    
     _checkp_file.write_tmp_best_tree();
+    
+    if(_checkp_file.opts.checkpoint_method == 1)
+      _checkp_file.write_tmp_best_model(parted_msa, ckp.models);
   }
 }
 

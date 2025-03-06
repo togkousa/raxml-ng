@@ -135,6 +135,7 @@ public:
   int  stopping_rule; /* 0: Noise Sampling RELL approach, 1: Noise Sampling RELL approach, 2: KH test, 3: KH multiple testing correction */
   bool modified_version;
   bool count_spr_moves;
+  int checkpoint_method; // adding option to 
 
   bool coarse() const { return num_workers > 1; };
 
