@@ -14,13 +14,20 @@ public:
   virtual
   ~Optimizer ();
 
-  double optimize_model(TreeInfo& treeinfo, double lh_epsilon);
-  double optimize_model(TreeInfo& treeinfo) { return optimize_model(treeinfo, _lh_epsilon); };
+  double optimize_model(TreeInfo& treeinfo, double lh_epsilon, bool testing_sites = false);
+  double optimize_model(TreeInfo& treeinfo, bool testing_sites = false) { return optimize_model(treeinfo, _lh_epsilon, testing_sites); };
   
+  double evaluate_testing_sites(TreeInfo& training_treeinfo, 
+                                TreeInfo* testing_treeinfo, 
+                                bool opt_branches,
+                                bool opt_moodel,
+                                double br_len_epsilon,
+                                double mod_opt_epsilon);
+
   // optimization routines
-  double optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
-  double optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
-  double optimize_topology_modified(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
+  double optimize_topology(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa);
+  double optimize_topology_adaptive(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa);
+  double optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa);
   
   double evaluate(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa);
   void nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& loglh);
@@ -41,6 +48,9 @@ private:
   int _stopping_criterion;
   bool _modified_version;
   StoppingCriterion *criterion;
+
+  // cross validation
+  bool _use_cv;
 
   // functions for adaptive mode
   int fast_spr_radius_adaptive(double difficulty);

@@ -46,6 +46,14 @@ struct ProgressInfo
   double loglh;
 };
 
+struct ProgressInfoCV
+{
+  ProgressInfoCV(double loglh, double test_loglh) : loglh(loglh), test_loglh(test_loglh) {};
+
+  double loglh;
+  double test_loglh;
+};
+
 typedef std::vector<std::ostream*> StreamList;
 
 class LogStream
@@ -121,6 +129,7 @@ Logging& logger();
                                                      << RAXML_LOG_WORKERID
 
 #define LOG_PROGRESS(loglh) LOG_PROGR << ProgressInfo(loglh)
+#define LOG_PROGRESS_CV(loglh, test_loglh) LOG_PROGR << ProgressInfoCV(loglh, test_loglh)
 
 #define FMT_LH(lh) setprecision(logger().precision(LogElement::loglh)) << lh
 #define FMT_MOD(p) setprecision(logger().precision(LogElement::model)) << p
@@ -140,6 +149,7 @@ LogStream& operator<<(LogStream& logstream, const T& object)
 
 LogStream& operator<<(LogStream& logstream, std::ostream& (*pf)(std::ostream&));
 LogStream& operator<<(LogStream& logstream, const ProgressInfo& prog);
+LogStream& operator<<(LogStream& logstream, const ProgressInfoCV& prog);
 LogStream& operator<<(LogStream& logstream, const TimeStamp& ts);
 LogStream& operator<<(LogStream& logstream, const time_t& t);
 

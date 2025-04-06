@@ -5,7 +5,7 @@
 #include "PartitionedMSA.hpp"
 #include "util/SafetyCheck.hpp"
 
-constexpr int RAXML_OPT_VERSION = 2;
+constexpr int RAXML_OPT_VERSION = 3;
 
 struct OutputFileNames
 {
@@ -64,6 +64,10 @@ public:
   bool use_par_pars;
   bool use_pythia;
   bool use_adaptive_search;
+  
+  /* cross-validation */
+  bool use_cv;
+  double cv_split_ratio;
 
   bool optimize_model;
   bool optimize_brlen;
@@ -111,6 +115,8 @@ public:
   std::string tree_file;
   std::string constraint_tree_file;
   std::string msa_file;
+  std::string training_msa_file;
+  std::string testing_msa_file;
   std::string model_file;     /* could be also model string */
   std::string weights_file;   /* MSA column weights / per-site LH scalers */
   std::string outfile_prefix;

@@ -56,6 +56,8 @@ public:
   Tree tree() const;
   Tree tree(size_t partition_id) const;
   void tree(const Tree& tree);
+  
+  void copy_tree(const corax_unode_t * root);
 
   /* in parallel mode, partition can be share among multiple threads and TreeInfo objects;
    * this method returns list of partition IDs for which this thread is designated as "master"
@@ -68,12 +70,12 @@ public:
 
   double loglh(bool incremental = false);
   double persite_loglh(std::vector<double*> part_site_lh, bool incremental = false);
-  double optimize_params(int params_to_optimize, double lh_epsilon);
-  double optimize_params_all(double lh_epsilon)
-  { return optimize_params(CORAX_OPT_PARAM_ALL, lh_epsilon); } ;
-  double optimize_model(double lh_epsilon)
-  { return optimize_params(CORAX_OPT_PARAM_ALL & ~CORAX_OPT_PARAM_BRANCHES_ITERATIVE, lh_epsilon); } ;
-  double optimize_branches(double lh_epsilon, double brlen_smooth_factor);
+  double optimize_params(int params_to_optimize, double lh_epsilon, bool testing_sites = false);
+  double optimize_params_all(double lh_epsilon, bool testing_sites = false)
+  { return optimize_params(CORAX_OPT_PARAM_ALL, lh_epsilon, testing_sites); } ;
+  double optimize_model(double lh_epsilon, bool testing_sites = false)
+  { return optimize_params(CORAX_OPT_PARAM_ALL & ~CORAX_OPT_PARAM_BRANCHES_ITERATIVE, lh_epsilon, testing_sites); } ;
+  double optimize_branches(double lh_epsilon, double brlen_smooth_factor, bool testing_sites = false);
   double spr_round(spr_round_params& params);
   double nni_round(nni_round_params& params);
   void compute_ancestral(const AncestralStatesSharedPtr& ancestral,
@@ -101,7 +103,7 @@ private:
 
 void assign(PartitionedMSA& parted_msa, const TreeInfo& treeinfo);
 void assign(Model& model, const TreeInfo& treeinfo, size_t partition_id);
-
+void assign_models(TreeInfo& treeinfo, const ModelMap& models);
 
 corax_partition_t* create_pll_partition(const Options& opts, const PartitionInfo& pinfo,
                                       const IDVector& tip_msa_idmap,

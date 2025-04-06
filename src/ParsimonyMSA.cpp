@@ -1,6 +1,6 @@
 #include "ParsimonyMSA.hpp"
 
-ParsimonyMSA::ParsimonyMSA (std::shared_ptr<PartitionedMSA> parted_msa, unsigned int attributes, bool compress_patterns)
+ParsimonyMSA::ParsimonyMSA(std::shared_ptr<PartitionedMSA> parted_msa, unsigned int attributes, bool compress_patterns)
 {
   init_pars_msa(parted_msa, compress_patterns);
   create_pll_partitions(attributes);

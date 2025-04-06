@@ -125,3 +125,11 @@ LogStream& operator<<(LogStream& logstream, const ProgressInfo& prog)
 
   return logstream;
 }
+
+LogStream& operator<<(LogStream& logstream, const ProgressInfoCV& prog)
+{
+
+  logstream << "[" << TimeStamp() << " " << FMT_LH(prog.loglh) << " " << FMT_LH(prog.test_loglh) << "] ";
+
+  return logstream;
+}

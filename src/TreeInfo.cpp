@@ -185,6 +185,30 @@ void TreeInfo::tree(const Tree& tree)
   _pll_treeinfo->root = corax_utree_graph_clone(&tree.pll_utree_root());
 }
 
+
+/* This function is used when I want to update the tree as well. 
+ * It first deletes the pre-existing pointer (if any), and then clones the new tree 
+*/
+void TreeInfo::copy_tree(const corax_unode_t * root)
+{
+  if(_pll_treeinfo->root)
+  { 
+    //corax_utree_graph_destroy(_pll_treeinfo->root, NULL);
+  }
+
+  if(_pll_treeinfo->tree)
+  {
+    corax_utree_destroy(_pll_treeinfo->tree, NULL);
+  }
+
+  _pll_treeinfo->root = corax_utree_graph_clone(root);
+  _pll_treeinfo->tree = corax_utree_wraptree(_pll_treeinfo->root, _pll_treeinfo->tip_count);
+  
+  int retval = corax_treeinfo_init_tree(_pll_treeinfo);
+  assert(retval);
+
+}
+
 double TreeInfo::loglh(bool incremental)
 {
   return corax_treeinfo_compute_loglh(_pll_treeinfo, incremental ? 1 : 0);
@@ -214,7 +238,7 @@ void TreeInfo::model(size_t partition_id, const Model& model)
 
 //#define DBG printf
 
-double TreeInfo::optimize_branches(double lh_epsilon, double brlen_smooth_factor)
+double TreeInfo::optimize_branches(double lh_epsilon, double brlen_smooth_factor, bool testing_sites)
 {
   /* update all CLVs and p-matrices before calling BLO */
   double new_loglh = loglh();
@@ -231,7 +255,8 @@ double TreeInfo::optimize_branches(double lh_epsilon, double brlen_smooth_factor
                                                     CORAX_OPT_BRLEN_OPTIMIZE_ALL
                                                     );
 
-    LOG_DEBUG << "\t - after brlen: logLH = " << new_loglh << endl;
+    LOG_DEBUG << "\t - after brlen: logLH = " << new_loglh 
+            << (testing_sites ? " (Testing sites)" : "") << endl;
 
     libpll_check_error("ERROR in branch length optimization");
     assert(isfinite(new_loglh));
@@ -248,7 +273,8 @@ double TreeInfo::optimize_branches(double lh_epsilon, double brlen_smooth_factor
                                                             _brlen_max,
                                                             RAXML_PARAM_EPSILON);
 
-    LOG_DEBUG << "\t - after brlen scalers: logLH = " << new_loglh << endl;
+    LOG_DEBUG << "\t - after brlen scalers: logLH = " << new_loglh 
+          << (testing_sites ? " (Testing sites)" : "") << endl;
 
     libpll_check_error("ERROR in brlen scaler optimization");
     assert(isfinite(new_loglh));
@@ -257,7 +283,7 @@ double TreeInfo::optimize_branches(double lh_epsilon, double brlen_smooth_factor
   return new_loglh;
 }
 
-double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
+double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon, bool testing_sites)
 {
   assert(!corax_errno);
 
@@ -275,7 +301,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
                                                           RAXML_BFGS_FACTOR,
                                                           RAXML_PARAM_EPSILON);
 
-    LOG_DEBUG << "\t - after rates: logLH = " << new_loglh << endl;
+    LOG_DEBUG << "\t - after rates: logLH = " << new_loglh 
+            << (testing_sites ? " (Testing sites)" : "") << endl;
 
     libpll_check_error("ERROR in substitution rates optimization");
     assert_lh_improvement(cur_loglh, new_loglh, "RATES");
@@ -292,7 +319,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
                                                           RAXML_BFGS_FACTOR,
                                                           RAXML_PARAM_EPSILON);
 
-    LOG_DEBUG << "\t - after freqs: logLH = " << new_loglh << endl;
+    LOG_DEBUG << "\t - after freqs: logLH = " << new_loglh 
+          << (testing_sites ? " (Testing sites)" : "") << endl;
 
     libpll_check_error("ERROR in base frequencies optimization");
     assert_lh_improvement(cur_loglh, new_loglh, "FREQS");
@@ -313,7 +341,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
                                                          RAXML_BFGS_FACTOR,
                                                          RAXML_PARAM_EPSILON);
 
-    LOG_DEBUG << "\t - after a+i  : logLH = " << new_loglh << endl;
+    LOG_DEBUG << "\t - after a+i  : logLH = " << new_loglh 
+        << (testing_sites ? " (Testing sites)" : "") << endl;
 
     libpll_check_error("ERROR in alpha/p-inv parameter optimization");
     assert_lh_improvement(cur_loglh, new_loglh, "ALPHA+PINV");
@@ -330,7 +359,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
                                                         CORAX_OPT_MAX_ALPHA,
                                                         RAXML_PARAM_EPSILON);
 
-     LOG_DEBUG << "\t - after alpha: logLH = " << new_loglh << endl;
+     LOG_DEBUG << "\t - after alpha: logLH = " << new_loglh 
+              << (testing_sites ? " (Testing sites)" : "") << endl;
 
      libpll_check_error("ERROR in alpha parameter optimization");
      assert_lh_improvement(cur_loglh, new_loglh, "ALPHA");
@@ -346,7 +376,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
                                                         CORAX_OPT_MAX_PINV,
                                                         RAXML_PARAM_EPSILON);
 
-      LOG_DEBUG << "\t - after p-inv: logLH = " << new_loglh << endl;
+      LOG_DEBUG << "\t - after p-inv: logLH = " << new_loglh 
+              << (testing_sites ? " (Testing sites)" : "") << endl;
 
       libpll_check_error("ERROR in p-inv optimization");
       assert_lh_improvement(cur_loglh, new_loglh, "PINV");
@@ -365,7 +396,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
                                                           RAXML_BFGS_FACTOR,
                                                           RAXML_PARAM_EPSILON);
 
-    LOG_DEBUG << "\t - after freeR: logLH = " << new_loglh << endl;
+    LOG_DEBUG << "\t - after freeR: logLH = " << new_loglh 
+            << (testing_sites ? " (Testing sites)" : "") << endl;
 //    LOG_DEBUG << "\t - after freeR/crosscheck: logLH = " << loglh() << endl;
 
     libpll_check_error("ERROR in FreeRate rates/weights optimization");
@@ -375,7 +407,7 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon)
 
   if (params_to_optimize & CORAX_OPT_PARAM_BRANCHES_ITERATIVE)
   {
-    new_loglh = optimize_branches(lh_epsilon, 0.25);
+    new_loglh = optimize_branches(lh_epsilon, 0.25, testing_sites);
 
     assert_lh_improvement(cur_loglh, new_loglh, "BRLEN");
     cur_loglh = new_loglh;
@@ -492,6 +524,18 @@ void assign(Model& model, const TreeInfo& treeinfo, size_t partition_id)
   model.alpha(pll_treeinfo.alphas[partition_id]);
   if (pll_treeinfo.brlen_scalers)
     model.brlen_scaler(pll_treeinfo.brlen_scalers[partition_id]);
+}
+
+void assign_models(TreeInfo& treeinfo, const ModelMap& models)
+{
+  const corax_treeinfo_t& pll_treeinfo = treeinfo.pll_treeinfo();
+  for (auto& m: models)
+  {
+    if (!pll_treeinfo.partitions[m.first])
+      continue;
+
+    treeinfo.model(m.first, m.second);
+  }
 }
 
 void build_clv(ProbVector::const_iterator probs, size_t sites, const WeightVector& weights, size_t seq_offset,

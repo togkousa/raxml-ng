@@ -7,6 +7,7 @@
 #include <map>
 #include <tuple>
 #include <math.h>
+#include <memory>
 #include "difficulty.h"
 
 typedef std::vector<double> ProbVector;
@@ -21,6 +22,8 @@ struct Range
 };
 
 typedef std::vector<Range> RangeList;
+
+class PartitionedMSA;
 
 class MSA
 {
@@ -58,6 +61,7 @@ public:
   const corax_msa_t * pll_msa() const;
   corax_msa_t* pll_msa_nonconst() const;
 
+  const container& sequences() const { return _sequences; }
   const container& labels() const { return _labels; };
   const std::string& label(size_t index) const { return _labels.at(index); }
   const std::string& at(const std::string& label) const
@@ -82,6 +86,10 @@ public:
   void weights(WeightVector&& v);
 
   void remove_sites(const std::vector<size_t>& site_indices);
+  
+  void set_labels(const container& labels) { _labels = labels; }
+  void set_label_id_map(const NameIdMap& label_id_map) { _label_id_map = label_id_map; }
+  void set_sequences(const container& sequences ) { _sequences = sequences; }
 
   const RangeList& local_seq_ranges() const;
   size_t get_local_offset(size_t global_offset) const;

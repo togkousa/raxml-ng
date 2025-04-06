@@ -1,4 +1,6 @@
 #include "PartitionedMSA.hpp"
+#include "Options.hpp"
+#include "io/file_io.hpp"
 
 using namespace std;
 
@@ -303,7 +305,10 @@ std::ostream& operator<<(std::ostream& stream, const PartitionedMSA& part_msa)
 
 void AutoPartitioner::init_from_string(PartitionedMSA& part_msa, DataType data_type, const std::string &model_string)
 {
-  size_t pos = model_string.find_first_of("/");
+  // TODO proper parsing, we look for the last "/" outside of curly brackets
+  size_t pos = model_string.find_last_of("/");
+  size_t pos2 = model_string.find_last_of("}");
+  if (pos2 != string::npos && pos < pos2) pos = string::npos;
   const string model_def = pos == string::npos ? model_string : model_string.substr(0, pos);
   const string part_def = pos == string::npos ? "" : model_string.substr(pos+1);
 
@@ -353,14 +358,11 @@ void AutoPartitioner::update_partition_ranges(PartitionedMSA& part_msa)
   if (part_msa.part_count() > 1)
   {
     for (std::vector<PartitionInfo>::iterator it = part_msa.part_list().begin(); it != part_msa.part_list().end();)
-    {   
-      
-        if (it->range_string() == ""){
-          it = part_msa.part_list().erase(it);
-        }
+    {
+        if (it->range_string() == "")
+            it = part_msa.part_list().erase(it);
         else
-          ++it;
-      
+            ++it;
     }
   }
 }
@@ -407,4 +409,182 @@ doubleVector AutoPartitioner::get_column_entropies(const PartitionedMSA& part_ms
   free(e);
 
   return column_entropies;
+}
+
+void PartitionedMSA::split_msa_cross_validation(const Options& opts,
+                                                  double split_ratio, 
+                                                  unsigned int seed)
+{ 
+  MSA _training_msa, _testing_msa;
+
+  corax_msa_cv_split_t* msa_split = 
+  corax_msa_cv_split_create(full_msa().pll_msa(), split_ratio, seed);
+
+  _training_sites_map.resize(msa_split->training_sites_count);
+  _testing_sites_map.resize(msa_split->testing_sites_count);
+
+  size_t _idx_training = 0, _idx_testing = 0;
+
+  for(size_t i = 0; i < msa_split->total_sites; ++i)
+  {
+    switch (msa_split->site_part[i])
+    {
+      case 1:
+        _training_sites_map[_idx_training++] = i;
+        break;
+
+      case 2:
+        _testing_sites_map[_idx_testing++] = i;
+        break;
+
+      default:
+        throw runtime_error("Invalid partition into training and testing sites\n");
+        break;
+    }
+  }
+  corax_msa_t ** cv_msas = 
+  corax_msa_split(full_msa().pll_msa(), msa_split->site_part, 2);
+
+
+  libpll_check_error("Error in CV MSA splitting");
+
+  _training_msa = MSA(cv_msas[0]);
+  _testing_msa = MSA(cv_msas[1]);
+
+
+  _training_msa.set_labels(full_msa().labels());
+  _training_msa.set_label_id_map(full_msa().label_id_map());
+
+  _testing_msa.set_labels(full_msa().labels());
+  _testing_msa.set_label_id_map(full_msa().label_id_map());
+
+  /* Set partitions for */
+  uintVector site_part_map = this->site_part_map();
+  uintVector site_part_map_training(cv_msas[0]->length);
+  uintVector site_part_map_testing(cv_msas[1]->length);
+
+  /* Check here if I have to remove this */
+  free(cv_msas);
+
+  for(size_t i = 0; i < site_part_map_training.size(); ++i)
+    site_part_map_training[i] = part_count() <= 1 ? 
+      1 : site_part_map[_training_sites_map[i]]; 
+
+  for(size_t i = 0; i < site_part_map_testing.size(); ++i)
+    site_part_map_testing[i] = part_count() <= 1 ? 
+      1 : site_part_map[_testing_sites_map[i]]; 
+
+  _parted_training_msa = 
+    make_shared<CVPartitionedMSA>(taxon_names(), site_part_map_training);
+  _parted_testing_msa = 
+    make_shared<CVPartitionedMSA>(taxon_names(), site_part_map_testing);
+
+  _parted_training_msa->full_msa(std::move(_training_msa));
+  _parted_testing_msa->full_msa(std::move(_testing_msa));
+
+  _parted_training_msa->init_part_info(opts);
+  _parted_testing_msa->init_part_info(opts);
+
+  corax_msa_cv_split_destroy(msa_split);
+}
+
+void PartitionedMSA::copy_taxon_names(const NameList& taxon_names)
+{
+  _taxon_names = taxon_names;
+
+  for (size_t i = 0; i < _taxon_names.size(); ++i)
+    _taxon_id_map[_taxon_names[i]] = i;
+
+  assert(_taxon_names.size() == taxon_names.size() && _taxon_id_map.size() == taxon_names.size());
+}
+
+void CVPartitionedMSA::init_part_info(const Options& opts)
+{
+  if (sysutil_file_exists(opts.model_file))
+  {
+    // read partition definitions from file
+    try
+    {
+      RaxmlPartitionStream partfile(opts.model_file, ios::in);
+      partfile >> *this;
+
+      /* Partition range-strings are wrong, since they are directly parsed from the user's modelfile
+       * This does not consittute an issue however, since the _site_part_map is directly provided at
+       * construction of the training and testing MSAs, hence when we split partitions we read the 
+       * assign sites to different partitions based on this _site_part_map. 
+       * 
+       * The user's modelfile should be parsed, however, for the models to be properly initialized.
+       * The following function presumably corrects the partition range strings, but we leave it 
+       * empty for now
+      */
+
+      correct_range_strs();
+    }
+    catch(exception& e)
+    {
+      throw runtime_error("Failed to read partition file in cross validation:\n" + string(e.what()));
+    }
+  }
+  else if (!opts.model_file.empty())
+  {
+    // create and init single pseudo-partition
+    this->init_single_model(opts.data_type, opts.model_file);
+  }
+  else
+    throw runtime_error("Please specify an evolutionary model with --model switch");
+
+  assert(part_count() > 0);
+  
+  /* make sure that linked branch length mode is set for unpartitioned alignments */
+  if (part_count() == 1)
+  {
+    if (opts.safety_checks.isset(SafetyCheck::model) &&
+        this->model(0).param_mode(CORAX_OPT_PARAM_BRANCH_LEN_SCALER) != ParamValue::undefined)
+      throw runtime_error("Branch length scalers (+B) are not supported for non-partitioned models!");
+  }
+
+  /* in the scaled brlen mode, use ML optimization of brlen scalers by default */
+  if (opts.brlen_linkage == CORAX_BRLEN_SCALED)
+  {
+    for (auto& pinfo: part_list())
+      pinfo.model().set_param_mode_default(CORAX_OPT_PARAM_BRANCH_LEN_SCALER, ParamValue::ML);
+  }
+
+  int freerate_count = 0;
+
+  for (const auto& pinfo: part_list())
+  {
+    // This will print wrong range strings, and hence we disable it
+    //LOG_DEBUG << "|" << pinfo.name() << "|   |" << pinfo.model().to_string() << "|   |" <<
+      //pinfo.range_string() << "|" << endl; 
+
+    if (pinfo.model().ratehet_mode() == CORAX_UTIL_MIXTYPE_FREE)
+      freerate_count++;
+  }
+
+  if (part_count() > 1 && freerate_count > 0 &&
+      opts.brlen_linkage == CORAX_BRLEN_LINKED)
+  {
+    throw runtime_error("LG4X and FreeRate models are not supported in linked branch length mode.\n"
+        "Please use the '--brlen scaled' option to switch into proportional branch length mode.");
+  }
+
+  split_msa(); 
+}
+
+void CVPartitionedMSA::correct_range_strs()
+{
+  assert(part_count() > 0);  
+  /*
+  string _range_str = "";
+
+  for (auto & p : part_list())
+  {
+    //This solution suffices for now 
+    //TODO: check if it's necessary to update the range strings into the exact partition ranges
+    //p.range_string(""); 
+  }
+  */
+  
+  return;
 }

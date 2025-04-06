@@ -87,6 +87,8 @@ static struct option long_options[] =
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
   {"stopping-criterion", required_argument, 0, 0 },  /*  63 */
   {"chkpt-method",       required_argument, 0, 0 },  /*  64 */
+  {"cv",                 no_argument,       0, 0 },  /*  65 */
+  {"cv-split-ratio",     required_argument, 0, 0 },  /*  66 */
   { 0, 0, 0, 0 }
 };
 
@@ -191,6 +193,17 @@ void CommandLineParser::check_options(Options &opts)
                             " instruction set on your system. If you are absolutely sure "
                             "it is supported, please use --force option to disable this check.");
     }
+  }
+
+  /* To be incorporated within the adaptive version */
+  if (opts.use_cv && 
+    (opts.stopping_rule == 0 || opts.stopping_rule == 1))
+  {
+    throw OptionException("Cross validation mode is only supported with the KH-based stopping criteria,"
+        " or with no stopping criteria at all. Please specify one of the following:"
+        "\n--stopping-criterion off"
+        "\n--stopping-criterion KH"
+        "\n--stopping-criterion KH-mult");
   }
 }
 
@@ -304,6 +317,10 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   /* default: nni parameters */
   opts.nni_tolerance = 1.0;
   opts.nni_epsilon = DEF_LH_EPSILON;
+
+  /* cross validation */
+  opts.use_cv = false;
+  opts.cv_split_ratio = DEF_CV_SPLIT_RATIO;
 
   /* Stopping criteria */
   opts.stopping_rule = 3; // by default, we use the KH-multiple testing as a stopping rule
@@ -1058,7 +1075,9 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         /* If the user specifies a stopping criterion, the algorithm uses a different heuristic */
         opts.modified_version = true;
         opts.count_spr_moves = false;
-        if (strcasecmp(optarg, "sn-rell") == 0) {
+        if (strcasecmp(optarg, "off") == 0) {
+          opts.stopping_rule = -1;
+        } else if (strcasecmp(optarg, "sn-rell") == 0) {
           opts.stopping_rule = 0;
         } else if (strcasecmp(optarg, "sn-normal") == 0) {
           opts.stopping_rule = 1;
@@ -1084,6 +1103,20 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         {
           throw InvalidOptionValueException("Invalid checkpoint method: " + string(optarg) +
                                             ", Possible input values are 0,1,2");
+        }
+        break;
+      
+      case 65: /* Use cross validation approach */
+        opts.use_cv = true;
+        break;
+      
+      case 66: /* NNI tolerance */
+        opts.use_cv = true;
+        if(sscanf(optarg, "%lf", &opts.cv_split_ratio) != 1 || 
+          opts.cv_split_ratio <= 0. || opts.cv_split_ratio >= 1.)
+        {
+          throw InvalidOptionValueException("Invalid Cross Validation split ratio: " + string(optarg) +
+                                            ", please provide a float between 0 and 1!\n");
         }
         break;
               

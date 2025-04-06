@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include "MSA.hpp"
+#include "PartitionedMSA.hpp"
 
 using namespace std;
 
@@ -170,6 +171,7 @@ void MSA::update_pll_msa() const
     _dirty = true;
   }
 
+  //cout << "Labels size " << _labels.size() << ", Sequences size " << _sequences.size() << endl;
   assert(_labels.empty() || _labels.size() == _sequences.size());
 
   if (_dirty)

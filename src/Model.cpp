@@ -1227,4 +1227,3 @@ LogStream& operator<<(LogStream& stream, const Model& m)
 
   return stream;
 }
-

@@ -8,7 +8,7 @@ Optimizer::Optimizer (const Options &opts) :
     _lh_epsilon(opts.lh_epsilon), _lh_epsilon_brlen_triplet(opts.lh_epsilon_brlen_triplet), 
     _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
     _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), 
-    _stopping_criterion(opts.stopping_rule), _modified_version(opts.modified_version)
+    _stopping_criterion(opts.stopping_rule), _modified_version(opts.modified_version), _use_cv(opts.use_cv)
 {
 }
 
@@ -17,7 +17,7 @@ Optimizer::~Optimizer ()
   // TODO Auto-generated destructor stub
 }
 
-double Optimizer::optimize_model(TreeInfo& treeinfo, double lh_epsilon)
+double Optimizer::optimize_model(TreeInfo& treeinfo, double lh_epsilon, bool testing_sites)
 {
   double new_loglh = treeinfo.loglh();
 
@@ -30,18 +30,50 @@ double Optimizer::optimize_model(TreeInfo& treeinfo, double lh_epsilon)
   {
     cur_loglh = new_loglh;
 
-    treeinfo.optimize_params_all(lh_epsilon);
+    treeinfo.optimize_params_all(lh_epsilon, testing_sites);
 
     new_loglh = treeinfo.loglh();
 
 //      printf("old: %f, new: %f\n", cur_loglh, new_loglh);
 
     iter_num++;
-    LOG_DEBUG << "Iteration " << iter_num <<  ": logLH = " << new_loglh << endl;
+    LOG_DEBUG << "Iteration " << iter_num <<  ": logLH = " << new_loglh 
+            << (testing_sites ? " (Testing sites)" : "") << endl;
+    
   }
   while (new_loglh - cur_loglh > lh_epsilon);
 
   return new_loglh;
+}
+
+double Optimizer::evaluate_testing_sites(TreeInfo& training_treeinfo, 
+                                      TreeInfo* testing_treeinfo, 
+                                      bool opt_branches,
+                                      bool opt_model,
+                                      double br_len_epsilon,
+                                      double mod_opt_epsilon)
+{
+  assert(testing_treeinfo && _use_cv);
+
+  
+  testing_treeinfo->copy_tree(&training_treeinfo.pll_utree_root());
+  
+  double test_loglh = testing_treeinfo->loglh();
+  //cout << "HEY OP! " << test_loglh << endl;
+  //cout << "Scalers " << testing_treeinfo->pll_treeinfo().brlen_scalers[3] << endl;
+  //cout << "Init Part count " << testing_treeinfo->pll_treeinfo().partition_count << endl;
+
+  if(opt_branches)
+  {
+    test_loglh = testing_treeinfo->optimize_branches(br_len_epsilon, 1, true);
+  }
+
+  if(opt_model)
+  {
+    test_loglh = optimize_model(*testing_treeinfo, mod_opt_epsilon, true);
+  }
+
+  return test_loglh;
 }
 
 void Optimizer::nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& loglh)
@@ -52,9 +84,9 @@ void Optimizer::nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& lo
   loglh = treeinfo.nni_round(nni_params);
 }
 
-double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa)
+double Optimizer::optimize_topology(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa)
 {
-  if(call_modified_version()) return optimize_topology_modified(treeinfo, cm, parted_msa);
+  if(call_modified_version()) return optimize_topology_modified(treeinfo, treeinfo_testing, cm, parted_msa);
 
   auto const& opts = cm.checkp_file().opts;
 
@@ -281,12 +313,12 @@ double Optimizer::optimize_topology(TreeInfo& treeinfo, CheckpointManager& cm, P
   return loglh;
 }
 
-double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa)
+double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa)
 {
   // TODO: connect the command line arguments for nni-epsilon and nni-tolerance with nni_params.lh_epsilon and 
   // nni_params.tolerance
   
-  if(call_modified_version()) return optimize_topology_modified(treeinfo, cm, parted_msa);
+  if(call_modified_version()) return optimize_topology_modified(treeinfo, treeinfo_testing, cm, parted_msa);
 
   auto const& opts = cm.checkp_file().opts;
 
@@ -507,14 +539,16 @@ double Optimizer::optimize_topology_adaptive(TreeInfo& treeinfo, CheckpointManag
   return loglh;
 }
 
-double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManager& cm, PartitionedMSA& parted_msa){
+double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa){
   
   assert(_modified_version || criterion != nullptr);
 
   auto const& opts = cm.checkp_file().opts;
 
+  const double fast_modopt_eps = 10.;
   const double interim_modopt_eps = 3.;
   const double final_modopt_eps = 0.1;
+  const double testing_modopt_eps = 1.;
 
   SearchState local_search_state = cm.search_state();
   auto& search_state = ParallelContext::group_master_thread() ? cm.search_state() : local_search_state;
@@ -648,7 +682,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
         cm.set_epsilon(_lh_epsilon);
       
       ParallelContext::barrier();
-    }
+    } 
   }
 
   if(ParallelContext::group_master_thread()){
@@ -667,6 +701,8 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
 
   double old_loglh, epsilon;
   bool impr = true;
+
+  double old_test_loglh = 0, test_loglh = 0;
   
   if(_spr_radius > 0){
     best_fast_radius = _spr_radius; // maybe change that idk
@@ -681,17 +717,40 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
       
       cm.update_and_write(treeinfo, parted_msa);
       ++iter;
+      old_loglh = loglh;
+
+      if(_use_cv)
+      {
+        old_test_loglh = evaluate_testing_sites(treeinfo, 
+                                              treeinfo_testing, 
+                                              true, 
+                                              true, 
+                                              fast_modopt_eps,
+                                              testing_modopt_eps);
+        
+      }
 
       if(use_kh_like) criterion->compute_loglh(treeinfo, persite_lnl, true);
 
-      old_loglh = loglh;
-      LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
+      (_use_cv ? LOG_PROGRESS_CV(old_loglh, old_test_loglh) : LOG_PROGRESS(old_loglh)) << 
+          (spr_params.thorough ? "SLOW" : "FAST") <<
           " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
-      
+    
+
       loglh = treeinfo.spr_round(spr_params);
 
       /* optimize ALL branches */
       loglh = treeinfo.optimize_branches(br_len_epsilon, 1);
+
+      if(_use_cv)
+      {
+        test_loglh = evaluate_testing_sites(treeinfo, 
+                                            treeinfo_testing, 
+                                            true, 
+                                            true, 
+                                            fast_modopt_eps,
+                                            testing_modopt_eps);
+      }
 
       if(use_kh_like){
         
@@ -709,13 +768,13 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
           
           double p_value = criterion->get_pvalue(ParallelContext::group_id());
           epsilon = criterion->get_epsilon(ParallelContext::group_id()); 
-          LOG_PROGRESS(loglh) << "KH-like multiple-testing epsilon = " << epsilon << endl;
+          LOG_DEBUG << "KH-like multiple-testing epsilon = " << epsilon << endl;
           impr = ((loglh - old_loglh > epsilon) && (p_value < 1));
           
         } else {
 
           epsilon = criterion->get_epsilon(ParallelContext::group_id());
-          LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+          LOG_DEBUG << "KH-like criterion epsilon = " << epsilon << endl;
           impr = (loglh - old_loglh > epsilon);
         }
       } else {
@@ -729,7 +788,10 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
   if (do_step(CheckpointStep::modOpt3))
   {
     cm.update_and_write(treeinfo, parted_msa);
-    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
+    
+    (_use_cv?  LOG_PROGRESS_CV(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
+      "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
+    
     loglh = optimize_model(treeinfo, interim_modopt_eps);
 
     /* init slow SPRs */
@@ -773,13 +835,13 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, CheckpointManag
           
           double p_value = criterion->get_pvalue(ParallelContext::group_id());
           epsilon = criterion->get_epsilon(ParallelContext::group_id()); 
-          LOG_PROGRESS(loglh) << "KH-like multiple-testing epsilon = " << epsilon << endl;
+          LOG_DEBUG << "KH-like multiple-testing epsilon = " << epsilon << endl;
           impr = ((loglh - old_loglh > epsilon) && (p_value < 1));
 
         } else {
 
           epsilon = criterion->get_epsilon(ParallelContext::group_id());
-          LOG_PROGRESS(loglh) << "KH-like criterion epsilon = " << epsilon << endl;
+          LOG_DEBUG << "KH-like criterion epsilon = " << epsilon << endl;
           impr = (loglh - old_loglh > epsilon);
         }
       } else {

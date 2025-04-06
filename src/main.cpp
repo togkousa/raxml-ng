@@ -84,6 +84,8 @@ struct RaxmlInstance
   TreeList bs_start_trees;
 
   intVector bs_seeds;
+  TreeList pars_trees;
+  unsigned int num_threads_parsimony;
 
   /* IDs of the trees that have been already inferred (eg after resuming from a checkpoint) */
   IDSet done_ml_trees;
@@ -91,6 +93,7 @@ struct RaxmlInstance
 
   // load balancing
   PartitionAssignmentList proc_part_assign;
+  PartitionAssignmentList proc_part_assign_testing;
   unique_ptr<LoadBalancer> load_balancer;
   unique_ptr<CoarseLoadBalancer> coarse_load_balancer;
 
@@ -150,7 +153,8 @@ struct RaxmlWorker
   IDVector start_trees;
   IDVector bs_trees;
   PartitionAssignmentList proc_part_assign;
-
+  PartitionAssignmentList proc_part_assign_testing;
+  
   Tree cur_bs_start_tree;
   BootstrapReplicate cur_bs_rep;
 
@@ -188,6 +192,12 @@ void init_part_info(RaxmlInstance& instance)
     throw runtime_error("Alignment file not found: " + opts.msa_file);
   }
 
+  if (opts.use_cv)
+  {
+    opts.training_msa_file = opts.msa_file + ".training";
+    opts.testing_msa_file = opts.msa_file + ".testing";
+  }
+
   /* check if we have a binary input file */
   if (opts.msa_format == FileFormat::binary ||
       (opts.msa_format == FileFormat::autodetect && RBAStream::rba_file(opts.msa_file)))
@@ -198,6 +208,12 @@ void init_part_info(RaxmlInstance& instance)
     {
       throw runtime_error("Alignments in RBA format are not supported in "
           "per-site likelihood mode, sorry!\n       Please use PHYLIP/FASTA instead.");
+    }
+
+    if (opts.use_cv)
+    {
+      throw runtime_error("The cross-validation option currently does not support alignments in RBA format "
+        " or checkpoint use. \n       We are working on it.");
     }
 
     if (!opts.model_file.empty())
@@ -821,8 +837,6 @@ void check_options_early(Options& opts)
       throw runtime_error("Pattern compression is not supported in ancestral state reconstruction mode!");
     if (opts.use_repeats)
       throw runtime_error("Site repeats are not supported in ancestral state reconstruction mode!");
-    if (opts.use_rate_scalers)
-      throw runtime_error("Per-rate scalers are not supported in ancestral state reconstruction mode!");
     if (opts.num_ranks > 1)
       throw runtime_error("MPI parallelization is not supported in ancestral state reconstruction mode!");
   }
@@ -848,6 +862,8 @@ void check_options_early(Options& opts)
 void check_options(RaxmlInstance& instance)
 {
   const auto& opts = instance.opts;
+  const auto& parted_msa = opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   /* check that all outgroup taxa are present in the alignment */
   if (!opts.outgroup_taxa.empty())
@@ -855,7 +871,7 @@ void check_options(RaxmlInstance& instance)
     NameList missing_taxa;
     for (const auto& ot: opts.outgroup_taxa)
     {
-      if (!instance.parted_msa->taxon_id_map().count(ot))
+      if (!parted_msa.taxon_id_map().count(ot))
         missing_taxa.push_back(ot);
     }
 
@@ -869,28 +885,31 @@ void check_options(RaxmlInstance& instance)
       throw runtime_error("Outgroup taxon not found.");
     }
   }
-
+  
   /* check that we have enough patterns per thread */
   if (opts.safety_checks.isset(SafetyCheck::perf_threads))
   {
     if (ParallelContext::master_rank() && ParallelContext::num_procs() > 1)
     {
-      StaticResourceEstimator resEstimator(*instance.parted_msa, instance.opts);
+      StaticResourceEstimator resEstimator(parted_msa, instance.opts);
+        
       auto res = resEstimator.estimate();
       if (ParallelContext::threads_per_group() > res.num_threads_response)
       {
         LOG_WARN << endl;
         LOG_WARN << "WARNING: You might be using too many threads (" << ParallelContext::num_procs()
-                 <<  ") for your alignment with "
-                 << (opts.use_pattern_compression ?
-                        to_string(instance.parted_msa->total_patterns()) + " unique patterns." :
-                        to_string(instance.parted_msa->total_sites()) + " alignment sites.")
-                 << endl;
+        <<  ") for your " << (opts.use_cv ? "training " : "") << "alignment "
+        << (opts.use_cv ? "(80% of total sites) " : "") << "with "
+        << (opts.use_pattern_compression ?
+          to_string(parted_msa.total_patterns()) + " unique patterns." :
+          to_string(parted_msa.total_sites()) + " alignment sites.")
+        << endl;
+          
         LOG_WARN << "NOTE:    For the optimal throughput, please consider using fewer threads " << endl;
         LOG_WARN << "NOTE:    and parallelize across starting trees/bootstrap replicates." << endl;
         LOG_WARN << "NOTE:    As a general rule-of-thumb, please assign at least 200-1000 "
-            "alignment patterns per thread." << endl << endl;
-
+          "alignment patterns per thread." << endl << endl;
+        
         if (ParallelContext::threads_per_group() > 2 * res.num_threads_response)
         {
           throw runtime_error("Too few patterns per thread! "
@@ -905,8 +924,8 @@ void check_options(RaxmlInstance& instance)
   /* auto-enable rate scalers for >2000 taxa */
   if (opts.safety_checks.isset(SafetyCheck::model_rate_scalers))
   {
-    if (instance.parted_msa->taxon_count() > RAXML_RATESCALERS_TAXA &&
-        !instance.opts.use_rate_scalers && opts.command != Command::ancestral)
+    if (parted_msa.taxon_count() > RAXML_RATESCALERS_TAXA &&
+        !instance.opts.use_rate_scalers)
     {
       LOG_INFO << "\nNOTE: Per-rate scalers were automatically enabled to prevent numerical issues "
           "on taxa-rich alignments." << endl;
@@ -957,8 +976,10 @@ void autotune_threads(RaxmlInstance& instance)
   if (opts.num_workers > 0 && opts.num_threads > 0)
     return;
 
-  StaticResourceEstimator resEstimator(*instance.parted_msa, instance.opts);
-  auto res = resEstimator.estimate();
+  StaticResourceEstimator resEstimator(opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa, instance.opts);
+  
+    auto res = resEstimator.estimate();
   unsigned int est_threads_throughput = (unsigned int) res.num_threads_throughput;
   unsigned int est_threads_response = (unsigned int) res.num_threads_response;
   auto num_ranks = opts.num_ranks;
@@ -1087,6 +1108,9 @@ void load_msa(RaxmlInstance& instance)
 
   LOG_INFO_TS << "Reading alignment from file: " << opts.msa_file << endl;
 
+  if(opts.use_cv && diff_pred)
+    throw runtime_error("Adaptive mode does not support cross-validation at the moment. Exit.\n");
+  
   /* load MSA */
   auto msa = msa_load_from_file(opts.msa_file, opts.msa_format);
   
@@ -1110,6 +1134,7 @@ void load_msa(RaxmlInstance& instance)
     instance.opts.use_repeats = false;
     instance.opts.use_pythia = false;
     instance.opts.use_adaptive_search = false;
+    instance.opts.use_cv = false; /* CV not supported with probabilistic MSAs */
 
     if (parted_msa.part_count() > 1)
       throw runtime_error("Partitioned probabilistic alignments are not supported yet, sorry...");
@@ -1120,6 +1145,7 @@ void load_msa(RaxmlInstance& instance)
   if (!check_msa_global(msa, instance.opts))
     throw runtime_error("Alignment check failed (see details above)!");
 
+  // TODO: Check for the instance when the user provides their own per-site weights
   load_msa_weights(msa, opts);
 
   parted_msa.full_msa(std::move(msa));
@@ -1127,7 +1153,10 @@ void load_msa(RaxmlInstance& instance)
   LOG_VERB_TS << "Extracting partitions... " << endl;
 
   parted_msa.split_msa();
-
+  
+  if(opts.use_cv)
+    parted_msa.split_msa_cross_validation(opts, opts.cv_split_ratio, opts.random_seed);
+  
   /* check alignment */
   if (!check_msa(instance))
     throw runtime_error("Alignment check failed (see details above)!");
@@ -1138,6 +1167,17 @@ void load_msa(RaxmlInstance& instance)
     bool store_backmap = opts.command == Command::sitelh;
     
     parted_msa.compress_patterns(store_backmap);
+
+    if(opts.use_cv)
+    {
+      LOG_VERB_TS << "Compressing training MSA patterns... " << endl;
+      parted_msa.parted_training_msa().compress_patterns(store_backmap);
+      //cout << "Done " << endl;
+
+      LOG_VERB_TS << "Compressing testing MSA patterns... " << endl;
+      parted_msa.parted_testing_msa().compress_patterns(store_backmap);
+      //cout << "Done " << endl;
+    }
 
     // temp workaround: since MSA pattern compression calls rand(), it will change all random
     // numbers generated afterwards. so just reset seed to the initial value to ensure that
@@ -1150,6 +1190,12 @@ void load_msa(RaxmlInstance& instance)
 
   parted_msa.set_model_empirical_params();
 
+  if(opts.use_cv)
+  {
+    parted_msa.parted_training_msa().set_model_empirical_params();
+    parted_msa.parted_testing_msa().set_model_empirical_params();
+  }
+
   check_models(instance);
 
   LOG_INFO << endl;
@@ -1159,6 +1205,29 @@ void load_msa(RaxmlInstance& instance)
            << endl << endl;
 
   LOG_INFO << parted_msa;
+
+  if(opts.use_cv)
+  {
+    LOG_INFO << "=======================================================" << endl;
+    LOG_INFO << "================= Cross Validation Mode ===============" << endl;
+    LOG_INFO << "Training MSA" << endl;
+    
+    LOG_INFO << "Alignment comprises " << parted_msa.parted_training_msa().part_count() << " partitions and "
+            << parted_msa.parted_training_msa().total_length() << (opts.use_pattern_compression ? " patterns" : " sites")
+            << endl << endl;
+
+    LOG_INFO << parted_msa.parted_training_msa();
+
+    LOG_INFO << "-------------------------------------------" << endl;
+    LOG_INFO << "Testing MSA" << endl;
+    
+    LOG_INFO << "Alignment comprises " << parted_msa.parted_testing_msa().part_count() << " partitions and "
+            << parted_msa.parted_testing_msa().total_length() << (opts.use_pattern_compression ? " patterns" : " sites")
+            << endl << endl;
+
+    LOG_INFO << parted_msa.parted_testing_msa();
+    LOG_INFO << "=======================================================" << endl;
+  }
 
   LOG_INFO << endl;
 }
@@ -1186,14 +1255,21 @@ void write_binary_msa_file(RaxmlInstance& instance)
   }
 }
 
-void build_parsimony_msa(RaxmlInstance& instance)
+void build_parsimony_msa(RaxmlInstance& instance, bool force = false)
 {
   unsigned int attrs = instance.opts.simd_arch;
 
   // TODO: check if there is any reason not to use tip-inner
   attrs |= CORAX_ATTRIB_PATTERN_TIP;
 
-  instance.parted_msa_parsimony.reset(new ParsimonyMSA(instance.parted_msa, attrs, instance.opts.use_pattern_compression));
+  shared_ptr<PartitionedMSA> parted_msa = instance.opts.use_cv ?
+    instance.parted_msa->parted_training_msa_shared_ptr() : instance.parted_msa;
+
+  if (!instance.parted_msa_parsimony || force)
+  {
+    instance.parted_msa_parsimony.reset(new ParsimonyMSA(parted_msa, attrs,
+                                                         instance.opts.use_pattern_compression));
+  }
 }
 
 void predict_msa_difficulty(RaxmlInstance& instance)
@@ -1303,7 +1379,11 @@ void prepare_tree(const RaxmlInstance& instance, Tree& tree)
   tree.fix_outbound_brlens(instance.opts.brlen_min, instance.opts.brlen_max);
 
   /* make sure tip indices are consistent between MSA and pll_tree */
-  assert(!instance.parted_msa->taxon_id_map().empty());
+  if(instance.opts.use_cv)
+    assert(!instance.parted_msa->parted_training_msa().taxon_id_map().empty());
+  else
+    assert(!instance.parted_msa->taxon_id_map().empty());
+  
   tree.reset_tip_ids(instance.tip_id_map);
 }
 
@@ -1312,8 +1392,9 @@ Tree generate_tree(const RaxmlInstance& instance, StartingTree type, int random_
   Tree tree;
 
   const auto& opts = instance.opts;
-  const auto& parted_msa = *instance.parted_msa;
-
+  const auto& parted_msa = opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
+  
   switch (type)
   {
     case StartingTree::user:
@@ -1404,8 +1485,14 @@ void load_start_trees(RaxmlInstance& instance)
 void load_checkpoint(RaxmlInstance& instance, CheckpointManager& cm)
 {
   /* init checkpoint and set to the manager */
-  cm.init_checkpoints(instance.random_tree, instance.parted_msa->models());
+  cm.init_checkpoints(instance.random_tree, 
+    instance.opts.use_cv ? 
+      instance.parted_msa->parted_training_msa().models() : 
+      instance.parted_msa->models());
+  
 
+  //cm.init_checkpoints(instance.random_tree, instance.parted_msa->models());
+    
   auto& ckpfile = cm.checkp_file();
 
   /* store Pythia MSA difficulty score in the checkpoint */
@@ -1505,8 +1592,9 @@ void load_checkpoint(RaxmlInstance& instance, CheckpointManager& cm)
 
 void load_constraint(RaxmlInstance& instance)
 {
-  const auto& parted_msa = *instance.parted_msa;
   const auto& opts = instance.opts;
+  const auto& parted_msa = opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   if (!instance.opts.constraint_tree_file.empty())
   {
@@ -1603,20 +1691,57 @@ void load_constraint(RaxmlInstance& instance)
   }
 }
 
-void thread_start_trees(RaxmlInstance& instance, StartingTree st_tree_type,
+void thread_start_trees(RaxmlInstance& instance, TreeList& tree_list, StartingTree st_tree_type,
                         const intVector& seeds, size_t offset)
 {
   for (size_t i = 0; i < seeds.size(); ++i)
   {
     if (i % ParallelContext::num_threads() == ParallelContext::thread_id())
-      instance.start_trees[offset + i] = generate_tree(instance, st_tree_type, seeds[i]);
+      tree_list[offset + i] = generate_tree(instance, st_tree_type, seeds[i]);
   }
 }
 
-void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 1)
+void build_trees_parallel(RaxmlInstance& instance, TreeList& tree_list, StartingTree tree_type,
+                          size_t tree_count, unsigned int num_threads)
 {
   auto& opts = instance.opts;
-  const auto& parted_msa = *instance.parted_msa;
+  auto old_size = tree_list.size();
+  tree_list.resize(old_size + tree_count);
+
+  // init seeds
+  intVector seeds(tree_count);
+  for (size_t i = 0; i < tree_count; ++i)
+    seeds[i] = rand();
+
+  auto thread_fn = std::bind(thread_start_trees,
+                             std::ref(instance),
+                             std::ref(tree_list),
+                             tree_type,
+                             std::cref(seeds),
+                             old_size);
+
+  if (!num_threads)
+    num_threads = instance.num_threads_parsimony;
+  assert(num_threads > 0);
+
+  if (num_threads > 1 && tree_type == StartingTree::parsimony)
+  {
+    auto mem_per_thread = instance.parted_msa_parsimony->memsize_estimate();
+    LOG_VERB << "Estimated memory per parsimony thread: " <<  mem_per_thread/1024/1024 << " MB" << endl;
+    unsigned int num_threads_max = 0.7 * sysutil_get_memtotal() / mem_per_thread;
+    num_threads = std::min(num_threads, num_threads_max);
+  }
+  LOG_INFO_TS << "Parallel parsimony: " << tree_count <<  " trees with " << num_threads << " threads" << endl;
+  ParallelContext::init_pthreads_custom(opts, thread_fn, num_threads, num_threads);
+  thread_fn();
+  ParallelContext::finalize_threads();
+}
+
+void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 0)
+{
+  auto& opts = instance.opts;
+  const auto& parted_msa = opts.use_cv ?
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   /* all start trees were already generated/loaded -> return */
   if (instance.start_trees.size() >= instance.opts.num_searches)
@@ -1626,11 +1751,6 @@ void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 1)
   {
     auto st_tree_type = st_tree.first;
     auto& st_tree_count = st_tree.second;
-
-    // init seeds
-    intVector seeds(st_tree_count);
-    for (size_t i = 0; i < st_tree_count; ++i)
-      seeds[i] = rand();
 
     switch (st_tree_type)
     {
@@ -1653,29 +1773,33 @@ void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 1)
         assert(0);
     }
 
-    if (num_threads != 1 && st_tree_type == StartingTree::parsimony)
+    if (st_tree_type == StartingTree::parsimony && opts.use_par_pars)
     {
-      auto old_size = instance.start_trees.size();
-      instance.start_trees.resize(old_size + st_tree_count);
+      size_t trees_to_generate = st_tree_count;
 
-      auto thread_fn = std::bind(thread_start_trees,
-                                 std::ref(instance),
-                                 st_tree_type,
-                                 std::cref(seeds),
-                                 old_size);
+      if (instance.constraint_tree.empty() && !instance.pars_trees.empty())
+      {
+        /* Try to reuse existing pars trees from pythia -> does not work with constraint */
+        for (size_t i = 0; (i < instance.pars_trees.size()) && trees_to_generate; i++)
+        {
+          instance.start_trees.emplace_back(instance.pars_trees.at(i));
+          trees_to_generate--;
+        }
 
-      assert(num_threads > 0);
-      auto mem_per_thread = instance.parted_msa_parsimony->memsize_estimate();
-      LOG_VERB << "Estimated memory per parsimony thread: " <<  mem_per_thread/1024/1024 << " MB" << endl;
-      unsigned int num_threads_max = 0.7 * sysutil_get_memtotal() / mem_per_thread;
-      num_threads = std::min(num_threads, num_threads_max);
-      LOG_INFO << "Parallel parsimony with " << num_threads << " threads" << endl;
-      ParallelContext::init_pthreads_custom(opts, thread_fn, num_threads, num_threads);
-      thread_fn();
-      ParallelContext::finalize_threads();
+        LOG_DEBUG_TS << "Reusing " << (st_tree_count - trees_to_generate)  << " parsimony trees; "
+                     << "left to generate: " << trees_to_generate << endl;
+      }
+
+      if (trees_to_generate)
+        build_trees_parallel(instance, instance.start_trees, st_tree_type, trees_to_generate, num_threads);
     }
     else
     {
+      // init seeds
+      intVector seeds(st_tree_count);
+      for (size_t i = 0; i < st_tree_count; ++i)
+        seeds[i] = rand();
+
       for (size_t i = 0; i < st_tree_count; ++i)
       {
         auto tree = generate_tree(instance, st_tree_type, seeds[i]);
@@ -1693,11 +1817,7 @@ void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 1)
         instance.start_trees.emplace_back(tree);
       }
     }
-
   }
-
-  // free memory used for parsimony MSA
-  instance.parted_msa_parsimony.release();
 
   if (::ParallelContext::master_rank())
   {
@@ -1709,22 +1829,44 @@ void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 1)
 
 void balance_load(RaxmlInstance& instance)
 {
-  PartitionAssignment part_sizes;
+  PartitionAssignment part_sizes, part_sizes_testing;
 
   /* init list of partition sizes */
   size_t i = 0;
-  for (auto const& pinfo: instance.parted_msa->part_list())
+  
+  const auto & parted_msa = instance.opts.use_cv ?
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
+
+  for (auto const& pinfo: parted_msa.part_list())
   {
     part_sizes.assign_sites(i, 0, pinfo.length(), pinfo.model().clv_entry_size());
     ++i;
   }
 
   instance.proc_part_assign =
-      instance.load_balancer->get_all_assignments(part_sizes, ParallelContext::threads_per_group());
-    /* only master process writes the log file */
-
+    instance.load_balancer->get_all_assignments(part_sizes, ParallelContext::threads_per_group());
+  
+  /* only master process writes the log file */
   LOG_INFO_TS << "Data distribution: " << PartitionAssignmentStats(instance.proc_part_assign) << endl;
   LOG_VERB << endl << instance.proc_part_assign;
+
+  if(instance.opts.use_cv)
+  {
+    i = 0;
+    for (auto const& pinfo: instance.parted_msa->parted_testing_msa().part_list())
+    {
+      part_sizes_testing.assign_sites(i, 0, pinfo.length(), pinfo.model().clv_entry_size());
+      ++i;
+    }
+
+    instance.proc_part_assign_testing =
+      instance.load_balancer->get_all_assignments(part_sizes_testing, ParallelContext::threads_per_group());
+    
+    /* only master process writes the log file */
+    LOG_INFO_TS << "Data distribution for testing MSA: " << PartitionAssignmentStats(instance.proc_part_assign_testing) << endl;
+    LOG_VERB << endl << instance.proc_part_assign_testing;
+    
+  }
 }
 
 PartitionAssignmentList balance_load(RaxmlInstance& instance, WeightVectorList part_site_weights)
@@ -1887,6 +2029,12 @@ void init_persite_loglh(RaxmlInstance& instance)
 {
   if (instance.opts.command == Command::sitelh)
   {
+    if(instance.opts.use_cv)
+    {
+      throw runtime_error("The cross-validation option currently does not support --sitelh "
+        " command. \n We are working on it.");
+    }
+
     const auto& parted_msa = *instance.parted_msa;
 
     instance.persite_loglh.resize(instance.start_trees.size());
@@ -2681,7 +2829,9 @@ void finalize_energy(RaxmlInstance& instance, const CheckpointFile& checkp)
 
 void init_parallel_buffers(const RaxmlInstance& instance)
 {
-  auto const& parted_msa = *instance.parted_msa;
+  auto const& parted_msa = instance.opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
+  
   auto const& opts = instance.opts;
 
   // we need 2 doubles for each partition AND threads to perform parallel reduction,
@@ -2719,14 +2869,21 @@ void init_parallel_buffers(const RaxmlInstance& instance)
 
 void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
 {
+  
   auto& worker = instance.get_worker();
   Checkpoint& checkp = cm.checkpoint();
-  auto const& master_msa = *instance.parted_msa;
+  
   auto const& opts = instance.opts;
-  auto& master_msa_unconst = *instance.parted_msa;
-
+  
+  auto const& master_msa = opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
+  
+  auto& master_msa_unconst = opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
+  
   unique_ptr<TreeInfo> treeinfo;
-
+  unique_ptr<TreeInfo> treeinfo_testing; /* for CV mode */
+  
   auto gather_ml_trees = [&instance, &cm](unsigned int& batch_id) -> void
     {
       if (instance.opts.coarse() && ParallelContext::num_ranks() > 1)
@@ -2743,7 +2900,9 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
 
   /* get partitions assigned to the current thread */
   auto const& part_assign = instance.proc_part_assign.at(ParallelContext::local_proc_id());
-
+  PartitionAssignment* part_assign_testing;
+  if(opts.use_cv) part_assign_testing = &instance.proc_part_assign_testing.at(ParallelContext::local_proc_id());
+  
   if (opts.command == Command::evaluate)
   {
     LOG_INFO << "\nEvaluating " << opts.num_searches <<
@@ -2777,17 +2936,29 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
     {
       if (ParallelContext::group_master_thread())
         checkp.tree_index = start_tree_num;
+      
       treeinfo.reset(new TreeInfo(opts, tree, master_msa, instance.tip_msa_idmap, part_assign));
+      if(opts.use_cv)
+        treeinfo_testing.reset(
+          new TreeInfo(opts, tree, instance.parted_msa->parted_testing_msa(), instance.tip_msa_idmap, *part_assign_testing));
     }
 
     treeinfo->set_topology_constraint(instance.constraint_tree);
-
+    
+    if(opts.use_cv)
+      treeinfo_testing->set_topology_constraint(instance.constraint_tree);
+    
     auto log_level = instance.start_trees.size() > 1 ? LogLevel::result : LogLevel::info;
     Optimizer optimizer(opts);
     
     if(instance.criterion){
-      instance.criterion->initialize_persite_lnl_vectors(treeinfo.get());
-      instance.criterion->set_thread_offset(treeinfo.get(), part_assign, ParallelContext::local_proc_id());
+      instance.criterion->initialize_persite_lnl_vectors(
+        opts.use_cv ? treeinfo_testing.get() : treeinfo.get());
+      
+      instance.criterion->set_thread_offset(
+        opts.use_cv ? treeinfo_testing.get() : treeinfo.get(), 
+        opts.use_cv ? *part_assign_testing : part_assign, 
+        ParallelContext::local_proc_id());
     } 
 
     optimizer.set_stopping_criterion(instance.criterion);
@@ -2820,9 +2991,13 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
     else
     {
       if (opts.use_adaptive_search)
-        optimizer.optimize_topology_adaptive(*treeinfo, cm, master_msa_unconst);
+        optimizer.optimize_topology_adaptive(*treeinfo, 
+          opts.use_cv ? treeinfo_testing.get() : nullptr, 
+          cm, master_msa_unconst);
       else
-        optimizer.optimize_topology(*treeinfo, cm, master_msa_unconst);
+        optimizer.optimize_topology(*treeinfo, 
+          opts.use_cv ? treeinfo_testing.get() : nullptr, 
+          cm, master_msa_unconst);
 
       LOG_PROGR << endl;
       LOG_WORKER_TS(log_level) << "ML tree search #" << start_tree_num <<
@@ -2989,9 +3164,9 @@ void thread_infer_bootstrap(RaxmlInstance& instance, CheckpointManager& cm)
     Optimizer optimizer(opts);
 
     if (opts.use_adaptive_search)
-      optimizer.optimize_topology_adaptive(*treeinfo, cm, master_msa_unconst);
+      optimizer.optimize_topology_adaptive(*treeinfo, nullptr, cm, master_msa_unconst);
     else
-      optimizer.optimize_topology(*treeinfo, cm, master_msa_unconst);
+      optimizer.optimize_topology(*treeinfo, nullptr, cm, master_msa_unconst);
 
     LOG_PROGR << endl;
     LOG_WORKER_TS(LogLevel::info) << "Bootstrap tree #" << *bs_num <<
@@ -3067,7 +3242,9 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
   instance.coarse_load_balancer.reset(new SimpleCoarseLoadBalancer());
 
   /* if resuming from a checkpoint, use binary MSA (if exists) */
-  if (!opts.redo_mode &&
+  /* and not cross validation mode (since it's a proof of concept version) */
+  if (!opts.redo_mode && 
+      !opts.use_cv &&
       sysutil_file_exists(opts.checkp_file()) &&
       sysutil_file_exists(opts.binary_msa_file()) &&
       RBAStream::rba_file(opts.binary_msa_file(), true))
@@ -3079,7 +3256,9 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
   // load MSA  
   load_parted_msa(instance);
   assert(instance.parted_msa);
-  auto& parted_msa = *instance.parted_msa;
+
+  auto& parted_msa = opts.use_cv ? 
+    instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   autotune_start_trees(instance);
 
@@ -3095,8 +3274,9 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
 
   // read start trees from file to avoid re-generation
   // NOTE: doesn't work for OLD constrained tree search
+  // Also skip this option for now for cross validation mode
   if (!instance.opts.redo_mode && sysutil_file_exists(instance.opts.start_tree_file()) &&
-      instance.opts.num_searches > 0 &&
+      instance.opts.num_searches > 0 && !instance.opts.use_cv &&
       !(instance.opts.constraint_tree_file.empty() && instance.opts.use_old_constraint))
   {
     load_start_trees(instance);
@@ -3179,34 +3359,55 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
   /* generate bootstrap replicates */
   generate_bootstraps(instance, cm.checkp_file());
 
+  // TODO: carefully check if coarse-grained parallelization generates problems
+  // in cross-validation mode
+  // In theory, it should't affect
   balance_load_coarse(instance, cm.checkp_file());
-
+  
   init_ancestral(instance);
-
+  
   init_persite_loglh(instance);
-
+  
+  // TODO: At this stage I will have to think seriously how am I going to use the testing MSA
+  // with the KH, I live it now for a later stage
   if(opts.stopping_rule != -1){
     
     switch (opts.stopping_rule)
     {
       case 0:
         instance.criterion = 
-          new NoiseSampling(instance.parted_msa, ParallelContext::num_groups(), ParallelContext::num_threads(), true, instance.opts.random_seed);
+          new NoiseSampling(instance.parted_msa, 
+                          ParallelContext::num_groups(), 
+                          ParallelContext::num_threads(), 
+                          true, instance.opts.random_seed);
         break;
       
       case 1:
         instance.criterion = 
-          new NoiseSampling(instance.parted_msa, ParallelContext::num_groups(), ParallelContext::num_threads(), false, instance.opts.random_seed);
+          new NoiseSampling(instance.parted_msa, 
+                          ParallelContext::num_groups(), 
+                          ParallelContext::num_threads(), 
+                          false, instance.opts.random_seed);
         break;
 
       case 2:
         instance.criterion = 
-          new KH(instance.parted_msa, ParallelContext::num_groups(), ParallelContext::num_threads(), false, instance.opts.random_seed);
+          new KH(opts.use_cv ? 
+                  instance.parted_msa->parted_testing_msa_shared_ptr() : 
+                  instance.parted_msa, 
+                ParallelContext::num_groups(), 
+                ParallelContext::num_threads(), 
+                false, instance.opts.random_seed);
         break;
       
       case 3:
         instance.criterion = 
-          new KH(instance.parted_msa, ParallelContext::num_groups(), ParallelContext::num_threads(), true, instance.opts.random_seed);
+          new KH(opts.use_cv ? 
+                  instance.parted_msa->parted_testing_msa_shared_ptr() : 
+                  instance.parted_msa, 
+                ParallelContext::num_groups(), 
+                ParallelContext::num_threads(), 
+                true, instance.opts.random_seed);
         break;
       
       default:
