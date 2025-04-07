@@ -32,6 +32,9 @@ void TreeInfo::init(const Options &opts, const Tree& tree, const PartitionedMSA&
   _use_old_constraint = opts.use_old_constraint;
   _use_spr_fastclv = opts.use_spr_fastclv;
   _lh_epsilon = opts.lh_epsilon;
+  
+  _branches_optimized = false;
+  _mod_params_optimized = false;
 
   _partition_contributions.resize(parted_msa.part_count());
   double total_weight = 0;
@@ -205,7 +208,12 @@ void TreeInfo::copy_tree(const corax_unode_t * root)
   _pll_treeinfo->tree = corax_utree_wraptree(_pll_treeinfo->root, _pll_treeinfo->tip_count);
   
   int retval = corax_treeinfo_init_tree(_pll_treeinfo);
+  
+  libpll_check_error("Unable to copy tree from training sites\n");
   assert(retval);
+
+  _branches_optimized = false;
+  _mod_params_optimized = false;
 
 }
 
@@ -279,6 +287,8 @@ double TreeInfo::optimize_branches(double lh_epsilon, double brlen_smooth_factor
     libpll_check_error("ERROR in brlen scaler optimization");
     assert(isfinite(new_loglh));
   }
+
+  _branches_optimized = true;
 
   return new_loglh;
 }
@@ -412,6 +422,8 @@ double TreeInfo::optimize_params(int params_to_optimize, double lh_epsilon, bool
     assert_lh_improvement(cur_loglh, new_loglh, "BRLEN");
     cur_loglh = new_loglh;
   }
+
+  _mod_params_optimized = true;
 
   return new_loglh;
 }

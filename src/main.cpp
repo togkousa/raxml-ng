@@ -1241,17 +1241,50 @@ void write_binary_msa_file(RaxmlInstance& instance)
       !instance.opts.use_prob_msa && !instance.opts.binary_msa_file().empty())
   {
     auto binary_msa_fname = instance.opts.binary_msa_file();
+    
     if (sysutil_file_exists(binary_msa_fname) && !opts.redo_mode &&
         opts.command != Command::parse)
     {
-      LOG_INFO << "NOTE: Binary MSA file already exists: " << binary_msa_fname << endl << endl;
+      LOG_INFO << "NOTE: Binary MSA file already exists: " << binary_msa_fname << endl;
     }
     else if (opts.command != Command::check)
     {
       RBAStream bs(binary_msa_fname);
       bs << parted_msa;
-      LOG_INFO << "NOTE: Binary MSA file created: " << binary_msa_fname << endl << endl;
+      LOG_INFO << "NOTE: Binary MSA file created: " << binary_msa_fname << endl;
     }
+
+    if (opts.use_cv)
+    {
+      auto binary_msa_training_fname = binary_msa_fname + ".training";
+      auto binary_msa_testing_fname = binary_msa_fname + ".testing";
+      
+      if (sysutil_file_exists(binary_msa_training_fname) && !opts.redo_mode &&
+          opts.command != Command::parse)
+      {
+        LOG_INFO << "NOTE: Binary training MSA file already exists: " << binary_msa_training_fname << endl;
+      }
+      else if (opts.command != Command::check)
+      {
+        RBAStream bs(binary_msa_training_fname);
+        bs << parted_msa.parted_training_msa();
+        LOG_INFO << "NOTE: Binary training MSA file created: " << binary_msa_training_fname << endl;
+      }
+
+      if (sysutil_file_exists(binary_msa_testing_fname) && !opts.redo_mode &&
+          opts.command != Command::parse)
+      {
+        LOG_INFO << "NOTE: Binary testing MSA file already exists: " << binary_msa_testing_fname << endl;
+      }
+      else if (opts.command != Command::check)
+      {
+        RBAStream bs(binary_msa_testing_fname);
+        bs << parted_msa.parted_testing_msa();
+        LOG_INFO << "NOTE: Binary testing MSA file created: " << binary_msa_testing_fname << endl;
+      }
+    }
+
+    LOG_INFO << endl;
   }
 }
 

@@ -48,27 +48,25 @@ double Optimizer::optimize_model(TreeInfo& treeinfo, double lh_epsilon, bool tes
 
 double Optimizer::evaluate_testing_sites(TreeInfo& training_treeinfo, 
                                       TreeInfo* testing_treeinfo, 
-                                      bool opt_branches,
-                                      bool opt_model,
                                       double br_len_epsilon,
-                                      double mod_opt_epsilon)
+                                      double mod_opt_epsilon,
+                                      bool substitute)
 {
   assert(testing_treeinfo && _use_cv);
 
+  if(substitute) testing_treeinfo->copy_tree(&training_treeinfo.pll_utree_root());
   
-  testing_treeinfo->copy_tree(&training_treeinfo.pll_utree_root());
+  bool incremental = (testing_treeinfo->branches_optimized() && 
+                      testing_treeinfo->mod_params_optimized());
   
-  double test_loglh = testing_treeinfo->loglh();
-  //cout << "HEY OP! " << test_loglh << endl;
-  //cout << "Scalers " << testing_treeinfo->pll_treeinfo().brlen_scalers[3] << endl;
-  //cout << "Init Part count " << testing_treeinfo->pll_treeinfo().partition_count << endl;
-
-  if(opt_branches)
+  double test_loglh = testing_treeinfo->loglh(incremental);
+  
+  if(!testing_treeinfo->branches_optimized())
   {
     test_loglh = testing_treeinfo->optimize_branches(br_len_epsilon, 1, true);
   }
 
-  if(opt_model)
+  if(!testing_treeinfo->mod_params_optimized())
   {
     test_loglh = optimize_model(*testing_treeinfo, mod_opt_epsilon, true);
   }
@@ -566,8 +564,10 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
 
   unsigned long int total_moves = 0, increasing_moves = 0;
-  spr_params.total_moves = (criterion && criterion->multi_test_correction()) ? &total_moves : nullptr;
-  spr_params.increasing_moves = (criterion && criterion->multi_test_correction()) ? &increasing_moves : nullptr;
+  spr_params.total_moves = ((criterion && criterion->multi_test_correction()) || _use_cv) ? 
+                            &total_moves : nullptr;
+  spr_params.increasing_moves = ((criterion && criterion->multi_test_correction()) || _use_cv) ? 
+                            &increasing_moves : nullptr;
   spr_params.intermediate_trees_file = "";
   
   // only master thread is saving to the sprFile
@@ -576,8 +576,8 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       opts.output_fname("sprTrees") : "";
   }
 
+  double old_test_loglh = 0, test_loglh = 0; // for cross-validation
   bool use_kh_like = (criterion) ? criterion->kh_test() : false;
-
   vector<double *> persite_lnl, persite_lnl_new;
   
   if(criterion){
@@ -652,8 +652,8 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   if (do_step(CheckpointStep::modOpt1))
   {
     cm.update_and_write(treeinfo, parted_msa);
-    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
-    loglh = optimize_model(treeinfo, interim_modopt_eps);
+    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << fast_modopt_eps << ")" << endl;
+    loglh = optimize_model(treeinfo, fast_modopt_eps);
 
     /* start spr rounds from the beginning */
     iter = 0;
@@ -683,6 +683,15 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       
       ParallelContext::barrier();
     } 
+
+    if(opts.use_cv)
+    {
+      old_test_loglh = evaluate_testing_sites(treeinfo, 
+                                              treeinfo_testing,
+                                              fast_modopt_eps,
+                                              testing_modopt_eps,
+                                              true);
+    }
   }
 
   if(ParallelContext::group_master_thread()){
@@ -701,8 +710,6 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
 
   double old_loglh, epsilon;
   bool impr = true;
-
-  double old_test_loglh = 0, test_loglh = 0;
   
   if(_spr_radius > 0){
     best_fast_radius = _spr_radius; // maybe change that idk
@@ -722,15 +729,16 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       if(_use_cv)
       {
         old_test_loglh = evaluate_testing_sites(treeinfo, 
-                                              treeinfo_testing, 
-                                              true, 
-                                              true, 
+                                              treeinfo_testing,
                                               fast_modopt_eps,
-                                              testing_modopt_eps);
+                                              testing_modopt_eps,
+                                              false);
         
       }
 
-      if(use_kh_like) criterion->compute_loglh(treeinfo, persite_lnl, true);
+      if(use_kh_like) 
+        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo, 
+                                persite_lnl, true);
 
       (_use_cv ? LOG_PROGRESS_CV(old_loglh, old_test_loglh) : LOG_PROGRESS(old_loglh)) << 
           (spr_params.thorough ? "SLOW" : "FAST") <<
@@ -745,16 +753,20 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       if(_use_cv)
       {
         test_loglh = evaluate_testing_sites(treeinfo, 
-                                            treeinfo_testing, 
-                                            true, 
-                                            true, 
-                                            fast_modopt_eps,
-                                            testing_modopt_eps);
+                                        treeinfo_testing, 
+                                        fast_modopt_eps,
+                                        testing_modopt_eps,
+                                        (*spr_params.increasing_moves) > 0 ? 
+                                          true : false);
       }
+
+      double L_new = _use_cv ? test_loglh : loglh;
+      double L_old = _use_cv ? old_test_loglh : old_loglh;
 
       if(use_kh_like){
         
-        criterion->compute_loglh(treeinfo,persite_lnl_new, false);
+        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo,
+                            persite_lnl_new, false);
         
         if(criterion->multi_test_correction()) 
           criterion->set_increasing_moves((*spr_params.increasing_moves));
@@ -764,22 +776,22 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
           
         ParallelContext::barrier();
 
-        if(spr_params.increasing_moves){
+        if(criterion->multi_test_correction()){
           
           double p_value = criterion->get_pvalue(ParallelContext::group_id());
           epsilon = criterion->get_epsilon(ParallelContext::group_id()); 
           LOG_DEBUG << "KH-like multiple-testing epsilon = " << epsilon << endl;
-          impr = ((loglh - old_loglh > epsilon) && (p_value < 1));
+          impr = ((L_new - L_old > epsilon) && (p_value < 1));
           
         } else {
 
           epsilon = criterion->get_epsilon(ParallelContext::group_id());
-          LOG_DEBUG << "KH-like criterion epsilon = " << epsilon << endl;
-          impr = (loglh - old_loglh > epsilon);
+          LOG_DEBUG << "KH criterion epsilon = " << epsilon << endl;
+          impr = (L_new - L_old > epsilon);
         }
       } else {
 
-        impr = (loglh - old_loglh > epsilon);
+        impr = (L_new - L_old > epsilon);
       }
     }
     while (impr);
@@ -789,7 +801,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   {
     cm.update_and_write(treeinfo, parted_msa);
     
-    (_use_cv?  LOG_PROGRESS_CV(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
+    (_use_cv ? LOG_PROGRESS_CV(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
       "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
     
     loglh = optimize_model(treeinfo, interim_modopt_eps);
@@ -811,17 +823,43 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       ++iter;
       old_loglh = loglh;
 
-      if(use_kh_like) criterion->compute_loglh(treeinfo, persite_lnl, true);
+      if(_use_cv)
+      {
+        old_test_loglh = evaluate_testing_sites(treeinfo, 
+                                              treeinfo_testing,
+                                              fast_modopt_eps,
+                                              testing_modopt_eps,
+                                              false); 
+      }
 
-      LOG_PROGRESS(old_loglh) << (spr_params.thorough ? "SLOW" : "FAST") <<
+      if(use_kh_like) 
+        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo, 
+                                persite_lnl, true);
+
+      (_use_cv ? LOG_PROGRESS_CV(old_loglh, old_test_loglh) : LOG_PROGRESS(old_loglh)) << 
+          (spr_params.thorough ? "SLOW" : "FAST") <<
           " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
-
+    
       loglh = treeinfo.spr_round(spr_params);
       loglh = treeinfo.optimize_branches(br_len_epsilon, 1);
+      
+      if(_use_cv)
+      {
+        test_loglh = evaluate_testing_sites(treeinfo, 
+                                        treeinfo_testing, 
+                                        fast_modopt_eps,
+                                        testing_modopt_eps,
+                                        (*spr_params.increasing_moves) > 0 ? 
+                                          true : false);
+      }
+
+      double L_new = _use_cv ? test_loglh : loglh;
+      double L_old = _use_cv ? old_test_loglh : old_loglh;
 
       if(use_kh_like){
         
-        criterion->compute_loglh(treeinfo, persite_lnl_new, false);
+        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo,
+                              persite_lnl_new, false);
 
         if(criterion->multi_test_correction()) 
           criterion->set_increasing_moves((*spr_params.increasing_moves));
@@ -831,22 +869,21 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
           
         ParallelContext::barrier();
 
-        if(spr_params.increasing_moves){
+        if(criterion->multi_test_correction()){
           
           double p_value = criterion->get_pvalue(ParallelContext::group_id());
           epsilon = criterion->get_epsilon(ParallelContext::group_id()); 
           LOG_DEBUG << "KH-like multiple-testing epsilon = " << epsilon << endl;
-          impr = ((loglh - old_loglh > epsilon) && (p_value < 1));
+          impr = ((L_new - L_old > epsilon) && (p_value < 1));
 
         } else {
 
           epsilon = criterion->get_epsilon(ParallelContext::group_id());
-          LOG_DEBUG << "KH-like criterion epsilon = " << epsilon << endl;
-          impr = (loglh - old_loglh > epsilon);
+          LOG_DEBUG << "KH criterion epsilon = " << epsilon << endl;
+          impr = (L_new - L_old > epsilon);
         }
       } else {
-
-        impr = (loglh - old_loglh > epsilon);
+        impr = (L_new - L_old > epsilon);
       }
     }
     while (impr);
@@ -856,7 +893,9 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   if (do_step(CheckpointStep::modOpt4))
   {
     cm.update_and_write(treeinfo, parted_msa);
-    LOG_PROGRESS(loglh) << "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
+
+    (_use_cv ? LOG_PROGRESS_CV(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
+      "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, final_modopt_eps);
   }
 

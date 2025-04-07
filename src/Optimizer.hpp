@@ -18,11 +18,10 @@ public:
   double optimize_model(TreeInfo& treeinfo, bool testing_sites = false) { return optimize_model(treeinfo, _lh_epsilon, testing_sites); };
   
   double evaluate_testing_sites(TreeInfo& training_treeinfo, 
-                                TreeInfo* testing_treeinfo, 
-                                bool opt_branches,
-                                bool opt_moodel,
+                                TreeInfo* testing_treeinfo,
                                 double br_len_epsilon,
-                                double mod_opt_epsilon);
+                                double mod_opt_epsilon,
+                                bool substitute = true);
 
   // optimization routines
   double optimize_topology(TreeInfo& treeinfo, TreeInfo* treeinfo_testing, CheckpointManager& cm, PartitionedMSA& parted_msa);

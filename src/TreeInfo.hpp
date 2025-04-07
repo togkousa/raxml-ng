@@ -58,6 +58,8 @@ public:
   void tree(const Tree& tree);
   
   void copy_tree(const corax_unode_t * root);
+  bool branches_optimized() { return _branches_optimized; }
+  bool mod_params_optimized() { return _mod_params_optimized; }
 
   /* in parallel mode, partition can be share among multiple threads and TreeInfo objects;
    * this method returns list of partition IDs for which this thread is designated as "master"
@@ -91,6 +93,8 @@ private:
   bool _check_lh_impr;
   bool _use_old_constraint;
   bool _use_spr_fastclv;
+  bool _branches_optimized;
+  bool _mod_params_optimized;
   double _lh_epsilon;
   doubleVector _partition_contributions;
 
