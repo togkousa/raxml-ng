@@ -1108,10 +1108,16 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
       
       case 65: /* Use cross validation approach */
         opts.use_cv = true;
+        opts.use_pythia = false;
+        opts.use_adaptive_search = false;
+        opts.modified_version = true;
         break;
       
       case 66: /* NNI tolerance */
         opts.use_cv = true;
+        opts.use_pythia = false;
+        opts.use_adaptive_search = false;
+        opts.modified_version = true;
         if(sscanf(optarg, "%lf", &opts.cv_split_ratio) != 1 || 
           opts.cv_split_ratio <= 0. || opts.cv_split_ratio >= 1.)
         {
