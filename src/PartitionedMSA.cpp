@@ -445,12 +445,23 @@ void PartitionedMSA::split_msa_cross_validation(const Options& opts,
   corax_msa_t ** cv_msas = 
   corax_msa_split(full_msa().pll_msa(), msa_split->site_part, 2);
 
-
   libpll_check_error("Error in CV MSA splitting");
 
   _training_msa = MSA(cv_msas[0]);
   _testing_msa = MSA(cv_msas[1]);
 
+  if(opts.split_save_phylip){
+    std::string prefix = opts.outfile_prefix.size() > 0 ? opts.outfile_prefix : opts.msa_file;
+    std::string training_fname = prefix + ".raxml.training.phy"; 
+    int res = corax_phylip_save(training_fname.c_str(), cv_msas[0], full_msa().pll_msa()->label);
+    assert(res);
+    
+    std::string testing_fname = prefix + ".raxml.testing.phy"; 
+    res = corax_phylip_save(testing_fname.c_str(), cv_msas[1], full_msa().pll_msa()->label);
+    assert(res);
+
+    libpll_check_error("Error in storing training and testing MSAs in PHYLIP format");
+  }
 
   _training_msa.set_labels(full_msa().labels());
   _training_msa.set_label_id_map(full_msa().label_id_map());

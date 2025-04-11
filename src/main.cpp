@@ -1254,7 +1254,7 @@ void write_binary_msa_file(RaxmlInstance& instance)
       LOG_INFO << "NOTE: Binary MSA file created: " << binary_msa_fname << endl;
     }
 
-    if (opts.use_cv)
+    if (opts.use_cv && !opts.split_save_phylip)
     {
       auto binary_msa_training_fname = binary_msa_fname + ".training";
       auto binary_msa_testing_fname = binary_msa_fname + ".testing";

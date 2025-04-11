@@ -8,7 +8,7 @@ Options::Options() : opt_version(RAXML_OPT_VERSION), cmdline(""), command(Comman
 use_tip_inner(true), use_pattern_compression(true), use_prob_msa(false), use_rate_scalers(false),
 use_repeats(true), use_rba_partload(true), use_energy_monitor(true), use_old_constraint(false),
 use_spr_fastclv(true), use_bs_pars(true), use_par_pars(true), use_pythia(true), use_adaptive_search(true), 
-use_cv(false), cv_split_ratio(DEF_CV_SPLIT_RATIO),
+use_cv(false), cv_split_ratio(DEF_CV_SPLIT_RATIO), split_save_phylip(false),
 optimize_model(true), optimize_brlen(true), force_mode(false), safety_checks(SafetyCheck::all),
 redo_mode(false), nofiles_mode(false), write_interim_results(true), write_bs_msa(false),
 log_level(LogLevel::progress), msa_format(FileFormat::autodetect), data_type(DataType::autodetect),

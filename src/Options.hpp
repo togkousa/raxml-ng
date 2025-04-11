@@ -68,6 +68,7 @@ public:
   /* cross-validation */
   bool use_cv;
   double cv_split_ratio;
+  bool split_save_phylip;
 
   bool optimize_model;
   bool optimize_brlen;

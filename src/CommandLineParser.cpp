@@ -321,6 +321,7 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   /* cross validation */
   opts.use_cv = false;
   opts.cv_split_ratio = DEF_CV_SPLIT_RATIO;
+  opts.split_save_phylip = false;
 
   /* Stopping criteria */
   opts.stopping_rule = 3; // by default, we use the KH-multiple testing as a stopping rule
@@ -884,6 +885,8 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
               opts.use_pythia = true;
             else if (eopt == "pythia-off")
               opts.use_pythia = false;
+            else if (eopt == "split-save-phylip")
+              opts.split_save_phylip = true;
             else if (eopt == "compat-v11")
             {
               compat_ver = 110;
