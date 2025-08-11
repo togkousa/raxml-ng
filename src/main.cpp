@@ -192,7 +192,7 @@ void init_part_info(RaxmlInstance& instance)
     throw runtime_error("Alignment file not found: " + opts.msa_file);
   }
 
-  if (opts.use_cv)
+  if (opts.use_holdout_es)
   {
     opts.training_msa_file = opts.msa_file + ".training";
     opts.testing_msa_file = opts.msa_file + ".testing";
@@ -210,7 +210,7 @@ void init_part_info(RaxmlInstance& instance)
           "per-site likelihood mode, sorry!\n       Please use PHYLIP/FASTA instead.");
     }
 
-    if (opts.use_cv)
+    if (opts.use_holdout_es)
     {
       throw runtime_error("The cross-validation option currently does not support alignments in RBA format "
         " or checkpoint use. \n       We are working on it.");
@@ -862,7 +862,7 @@ void check_options_early(Options& opts)
 void check_options(RaxmlInstance& instance)
 {
   const auto& opts = instance.opts;
-  const auto& parted_msa = opts.use_cv ? 
+  const auto& parted_msa = opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   /* check that all outgroup taxa are present in the alignment */
@@ -898,8 +898,8 @@ void check_options(RaxmlInstance& instance)
       {
         LOG_WARN << endl;
         LOG_WARN << "WARNING: You might be using too many threads (" << ParallelContext::num_procs()
-        <<  ") for your " << (opts.use_cv ? "training " : "") << "alignment "
-        << (opts.use_cv ? "(80% of total sites) " : "") << "with "
+        <<  ") for your " << (opts.use_holdout_es ? "training " : "") << "alignment "
+        << (opts.use_holdout_es ? "(80% of total sites) " : "") << "with "
         << (opts.use_pattern_compression ?
           to_string(parted_msa.total_patterns()) + " unique patterns." :
           to_string(parted_msa.total_sites()) + " alignment sites.")
@@ -976,7 +976,7 @@ void autotune_threads(RaxmlInstance& instance)
   if (opts.num_workers > 0 && opts.num_threads > 0)
     return;
 
-  StaticResourceEstimator resEstimator(opts.use_cv ? 
+  StaticResourceEstimator resEstimator(opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa, instance.opts);
   
     auto res = resEstimator.estimate();
@@ -1108,7 +1108,7 @@ void load_msa(RaxmlInstance& instance)
 
   LOG_INFO_TS << "Reading alignment from file: " << opts.msa_file << endl;
 
-  if(opts.use_cv && diff_pred)
+  if(opts.use_holdout_es && diff_pred)
     throw runtime_error("Adaptive mode does not support cross-validation at the moment. Exit.\n");
   
   /* load MSA */
@@ -1134,7 +1134,7 @@ void load_msa(RaxmlInstance& instance)
     instance.opts.use_repeats = false;
     instance.opts.use_pythia = false;
     instance.opts.use_adaptive_search = false;
-    instance.opts.use_cv = false; /* CV not supported with probabilistic MSAs */
+    instance.opts.use_holdout_es = false; /* CV not supported with probabilistic MSAs */
 
     if (parted_msa.part_count() > 1)
       throw runtime_error("Partitioned probabilistic alignments are not supported yet, sorry...");
@@ -1154,8 +1154,8 @@ void load_msa(RaxmlInstance& instance)
 
   parted_msa.split_msa();
   
-  if(opts.use_cv)
-    parted_msa.split_msa_cross_validation(opts, opts.cv_split_ratio, opts.random_seed);
+  if(opts.use_holdout_es)
+    parted_msa.split_msa_cross_validation(opts, opts.split_ratio, opts.random_seed);
   
   /* check alignment */
   if (!check_msa(instance))
@@ -1168,7 +1168,7 @@ void load_msa(RaxmlInstance& instance)
     
     parted_msa.compress_patterns(store_backmap);
 
-    if(opts.use_cv)
+    if(opts.use_holdout_es)
     {
       LOG_VERB_TS << "Compressing training MSA patterns... " << endl;
       parted_msa.parted_training_msa().compress_patterns(store_backmap);
@@ -1190,7 +1190,7 @@ void load_msa(RaxmlInstance& instance)
 
   parted_msa.set_model_empirical_params();
 
-  if(opts.use_cv)
+  if(opts.use_holdout_es)
   {
     parted_msa.parted_training_msa().set_model_empirical_params();
     parted_msa.parted_testing_msa().set_model_empirical_params();
@@ -1206,10 +1206,10 @@ void load_msa(RaxmlInstance& instance)
 
   LOG_INFO << parted_msa;
 
-  if(opts.use_cv)
+  if(opts.use_holdout_es)
   {
-    LOG_INFO << "=======================================================" << endl;
-    LOG_INFO << "================= Cross Validation Mode ===============" << endl;
+    LOG_INFO << "===================================================================" << endl;
+    LOG_INFO << "================= Holdout-based Early Stopping Mode ===============" << endl;
     LOG_INFO << "Training MSA" << endl;
     
     LOG_INFO << "Alignment comprises " << parted_msa.parted_training_msa().part_count() << " partitions and "
@@ -1226,7 +1226,7 @@ void load_msa(RaxmlInstance& instance)
             << endl << endl;
 
     LOG_INFO << parted_msa.parted_testing_msa();
-    LOG_INFO << "=======================================================" << endl;
+    LOG_INFO << "===================================================================" << endl;
   }
 
   LOG_INFO << endl;
@@ -1254,7 +1254,7 @@ void write_binary_msa_file(RaxmlInstance& instance)
       LOG_INFO << "NOTE: Binary MSA file created: " << binary_msa_fname << endl;
     }
 
-    if (opts.use_cv && !opts.split_save_phylip)
+    if (opts.use_holdout_es && !opts.split_save_phylip)
     {
       auto binary_msa_training_fname = binary_msa_fname + ".training";
       auto binary_msa_testing_fname = binary_msa_fname + ".testing";
@@ -1295,7 +1295,7 @@ void build_parsimony_msa(RaxmlInstance& instance, bool force = false)
   // TODO: check if there is any reason not to use tip-inner
   attrs |= CORAX_ATTRIB_PATTERN_TIP;
 
-  shared_ptr<PartitionedMSA> parted_msa = instance.opts.use_cv ?
+  shared_ptr<PartitionedMSA> parted_msa = instance.opts.use_holdout_es ?
     instance.parted_msa->parted_training_msa_shared_ptr() : instance.parted_msa;
 
   if (!instance.parted_msa_parsimony || force)
@@ -1412,7 +1412,7 @@ void prepare_tree(const RaxmlInstance& instance, Tree& tree)
   tree.fix_outbound_brlens(instance.opts.brlen_min, instance.opts.brlen_max);
 
   /* make sure tip indices are consistent between MSA and pll_tree */
-  if(instance.opts.use_cv)
+  if(instance.opts.use_holdout_es)
     assert(!instance.parted_msa->parted_training_msa().taxon_id_map().empty());
   else
     assert(!instance.parted_msa->taxon_id_map().empty());
@@ -1425,7 +1425,7 @@ Tree generate_tree(const RaxmlInstance& instance, StartingTree type, int random_
   Tree tree;
 
   const auto& opts = instance.opts;
-  const auto& parted_msa = opts.use_cv ? 
+  const auto& parted_msa = opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
   
   switch (type)
@@ -1519,7 +1519,7 @@ void load_checkpoint(RaxmlInstance& instance, CheckpointManager& cm)
 {
   /* init checkpoint and set to the manager */
   cm.init_checkpoints(instance.random_tree, 
-    instance.opts.use_cv ? 
+    instance.opts.use_holdout_es ? 
       instance.parted_msa->parted_training_msa().models() : 
       instance.parted_msa->models());
   
@@ -1626,7 +1626,7 @@ void load_checkpoint(RaxmlInstance& instance, CheckpointManager& cm)
 void load_constraint(RaxmlInstance& instance)
 {
   const auto& opts = instance.opts;
-  const auto& parted_msa = opts.use_cv ? 
+  const auto& parted_msa = opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   if (!instance.opts.constraint_tree_file.empty())
@@ -1773,7 +1773,7 @@ void build_trees_parallel(RaxmlInstance& instance, TreeList& tree_list, Starting
 void build_start_trees(RaxmlInstance& instance, unsigned int num_threads = 0)
 {
   auto& opts = instance.opts;
-  const auto& parted_msa = opts.use_cv ?
+  const auto& parted_msa = opts.use_holdout_es ?
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   /* all start trees were already generated/loaded -> return */
@@ -1867,7 +1867,7 @@ void balance_load(RaxmlInstance& instance)
   /* init list of partition sizes */
   size_t i = 0;
   
-  const auto & parted_msa = instance.opts.use_cv ?
+  const auto & parted_msa = instance.opts.use_holdout_es ?
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   for (auto const& pinfo: parted_msa.part_list())
@@ -1883,7 +1883,7 @@ void balance_load(RaxmlInstance& instance)
   LOG_INFO_TS << "Data distribution: " << PartitionAssignmentStats(instance.proc_part_assign) << endl;
   LOG_VERB << endl << instance.proc_part_assign;
 
-  if(instance.opts.use_cv)
+  if(instance.opts.use_holdout_es)
   {
     i = 0;
     for (auto const& pinfo: instance.parted_msa->parted_testing_msa().part_list())
@@ -2062,7 +2062,7 @@ void init_persite_loglh(RaxmlInstance& instance)
 {
   if (instance.opts.command == Command::sitelh)
   {
-    if(instance.opts.use_cv)
+    if(instance.opts.use_holdout_es)
     {
       throw runtime_error("The cross-validation option currently does not support --sitelh "
         " command. \n We are working on it.");
@@ -2862,7 +2862,7 @@ void finalize_energy(RaxmlInstance& instance, const CheckpointFile& checkp)
 
 void init_parallel_buffers(const RaxmlInstance& instance)
 {
-  auto const& parted_msa = instance.opts.use_cv ? 
+  auto const& parted_msa = instance.opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
   
   auto const& opts = instance.opts;
@@ -2908,10 +2908,10 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
   
   auto const& opts = instance.opts;
   
-  auto const& master_msa = opts.use_cv ? 
+  auto const& master_msa = opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
   
-  auto& master_msa_unconst = opts.use_cv ? 
+  auto& master_msa_unconst = opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
   
   unique_ptr<TreeInfo> treeinfo;
@@ -2934,7 +2934,7 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
   /* get partitions assigned to the current thread */
   auto const& part_assign = instance.proc_part_assign.at(ParallelContext::local_proc_id());
   PartitionAssignment* part_assign_testing;
-  if(opts.use_cv) part_assign_testing = &instance.proc_part_assign_testing.at(ParallelContext::local_proc_id());
+  if(opts.use_holdout_es) part_assign_testing = &instance.proc_part_assign_testing.at(ParallelContext::local_proc_id());
   
   if (opts.command == Command::evaluate)
   {
@@ -2971,14 +2971,14 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
         checkp.tree_index = start_tree_num;
       
       treeinfo.reset(new TreeInfo(opts, tree, master_msa, instance.tip_msa_idmap, part_assign));
-      if(opts.use_cv)
+      if(opts.use_holdout_es)
         treeinfo_testing.reset(
           new TreeInfo(opts, tree, instance.parted_msa->parted_testing_msa(), instance.tip_msa_idmap, *part_assign_testing));
     }
 
     treeinfo->set_topology_constraint(instance.constraint_tree);
     
-    if(opts.use_cv)
+    if(opts.use_holdout_es)
       treeinfo_testing->set_topology_constraint(instance.constraint_tree);
     
     auto log_level = instance.start_trees.size() > 1 ? LogLevel::result : LogLevel::info;
@@ -2986,11 +2986,11 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
     
     if(instance.criterion){
       instance.criterion->initialize_persite_lnl_vectors(
-        opts.use_cv ? treeinfo_testing.get() : treeinfo.get());
+        opts.use_holdout_es ? treeinfo_testing.get() : treeinfo.get());
       
       instance.criterion->set_thread_offset(
-        opts.use_cv ? treeinfo_testing.get() : treeinfo.get(), 
-        opts.use_cv ? *part_assign_testing : part_assign, 
+        opts.use_holdout_es ? treeinfo_testing.get() : treeinfo.get(), 
+        opts.use_holdout_es ? *part_assign_testing : part_assign, 
         ParallelContext::local_proc_id());
     } 
 
@@ -3025,11 +3025,11 @@ void thread_infer_ml(RaxmlInstance& instance, CheckpointManager& cm)
     {
       if (opts.use_adaptive_search)
         optimizer.optimize_topology_adaptive(*treeinfo, 
-          opts.use_cv ? treeinfo_testing.get() : nullptr, 
+          opts.use_holdout_es ? treeinfo_testing.get() : nullptr, 
           cm, master_msa_unconst);
       else
         optimizer.optimize_topology(*treeinfo, 
-          opts.use_cv ? treeinfo_testing.get() : nullptr, 
+          opts.use_holdout_es ? treeinfo_testing.get() : nullptr, 
           cm, master_msa_unconst);
 
       LOG_PROGR << endl;
@@ -3275,9 +3275,9 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
   instance.coarse_load_balancer.reset(new SimpleCoarseLoadBalancer());
 
   /* if resuming from a checkpoint, use binary MSA (if exists) */
-  /* and not cross validation mode (since it's a proof of concept version) */
+  /* and not holdout validation mode (since it's a proof of concept version) */
   if (!opts.redo_mode && 
-      !opts.use_cv &&
+      !opts.use_holdout_es &&
       sysutil_file_exists(opts.checkp_file()) &&
       sysutil_file_exists(opts.binary_msa_file()) &&
       RBAStream::rba_file(opts.binary_msa_file(), true))
@@ -3286,11 +3286,20 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
     instance.opts.msa_format = FileFormat::binary;
   }
 
+  /* Holdout-based version does not support checkpointing */
+  if (opts.use_holdout_es && 
+      !opts.redo_mode && 
+      sysutil_file_exists(opts.checkp_file()))
+  {
+    throw OptionException("Checkpointing is not supported in Holdout-based validation version."
+        "\nPlease delete the RAxML-NG output files, or execute with --redo option.");
+  }
+
   // load MSA  
   load_parted_msa(instance);
   assert(instance.parted_msa);
 
-  auto& parted_msa = opts.use_cv ? 
+  auto& parted_msa = opts.use_holdout_es ? 
     instance.parted_msa->parted_training_msa() : *instance.parted_msa;
 
   autotune_start_trees(instance);
@@ -3309,7 +3318,7 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
   // NOTE: doesn't work for OLD constrained tree search
   // Also skip this option for now for cross validation mode
   if (!instance.opts.redo_mode && sysutil_file_exists(instance.opts.start_tree_file()) &&
-      instance.opts.num_searches > 0 && !instance.opts.use_cv &&
+      instance.opts.num_searches > 0 && !instance.opts.use_holdout_es &&
       !(instance.opts.constraint_tree_file.empty() && instance.opts.use_old_constraint))
   {
     load_start_trees(instance);
@@ -3425,7 +3434,7 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
 
       case 2:
         instance.criterion = 
-          new KH(opts.use_cv ? 
+          new KH(opts.use_holdout_es ? 
                   instance.parted_msa->parted_testing_msa_shared_ptr() : 
                   instance.parted_msa, 
                 ParallelContext::num_groups(), 
@@ -3435,7 +3444,7 @@ void master_main(RaxmlInstance& instance, CheckpointManager& cm)
       
       case 3:
         instance.criterion = 
-          new KH(opts.use_cv ? 
+          new KH(opts.use_holdout_es ? 
                   instance.parted_msa->parted_testing_msa_shared_ptr() : 
                   instance.parted_msa, 
                 ParallelContext::num_groups(), 

@@ -49,11 +49,24 @@ private:
   StoppingCriterion *criterion;
 
   // cross validation
-  bool _use_cv;
+  bool _use_holdout_es;
+  int _convergence_iters;
+  corax_unode_t *_best_holdout_es_solution;
+  double _best_holdout_es_loglh;
 
   // functions for adaptive mode
   int fast_spr_radius_adaptive(double difficulty);
   bool call_modified_version() {return _modified_version; }
+
+  // houldout es fucntion
+  double revert_to_best_solution(TreeInfo& training_treeinfo, 
+                                TreeInfo* testing_treeinfo,
+                                double br_len_epsilon,
+                                double mod_opt_epsilon,
+                                double &training_loglh,
+                                double &test_loglh);
+  
+  void set_best_holdout_es_solution(const corax_unode_t* root, double testing_loglh);
 };
 
 #endif /* RAXML_OPTIMIZER_H_ */

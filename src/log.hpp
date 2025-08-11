@@ -129,7 +129,7 @@ Logging& logger();
                                                      << RAXML_LOG_WORKERID
 
 #define LOG_PROGRESS(loglh) LOG_PROGR << ProgressInfo(loglh)
-#define LOG_PROGRESS_CV(loglh, test_loglh) LOG_PROGR << ProgressInfoCV(loglh, test_loglh)
+#define LOG_PROGRESS_HOLDOUT(loglh, test_loglh) LOG_PROGR << ProgressInfoCV(loglh, test_loglh)
 
 #define FMT_LH(lh) setprecision(logger().precision(LogElement::loglh)) << lh
 #define FMT_MOD(p) setprecision(logger().precision(LogElement::model)) << p

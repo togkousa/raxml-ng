@@ -87,8 +87,9 @@ static struct option long_options[] =
   {"nni-epsilon",        required_argument, 0, 0 },  /*  62 */
   {"stopping-criterion", required_argument, 0, 0 },  /*  63 */
   {"chkpt-method",       required_argument, 0, 0 },  /*  64 */
-  {"cv",                 no_argument,       0, 0 },  /*  65 */
-  {"cv-split-ratio",     required_argument, 0, 0 },  /*  66 */
+  {"holdout-es",         no_argument,       0, 0 },  /*  65 */
+  {"split-ratio",        required_argument, 0, 0 },  /*  66 */
+  {"conv-iters",         required_argument, 0, 0 },  /*  67 */
   { 0, 0, 0, 0 }
 };
 
@@ -196,15 +197,16 @@ void CommandLineParser::check_options(Options &opts)
   }
 
   /* To be incorporated within the adaptive version */
-  if (opts.use_cv && 
+  if (opts.use_holdout_es && 
     (opts.stopping_rule == 0 || opts.stopping_rule == 1))
   {
-    throw OptionException("Cross validation mode is only supported with the KH-based stopping criteria,"
+    throw OptionException("Holdout-based validation mode is only supported with the KH-based stopping criteria,"
         " or with no stopping criteria at all. Please specify one of the following:"
         "\n--stopping-criterion off"
         "\n--stopping-criterion KH"
         "\n--stopping-criterion KH-mult");
   }
+  
 }
 
 void CommandLineParser::compute_num_searches(Options &opts)
@@ -319,9 +321,10 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
   opts.nni_epsilon = DEF_LH_EPSILON;
 
   /* cross validation */
-  opts.use_cv = false;
-  opts.cv_split_ratio = DEF_CV_SPLIT_RATIO;
+  opts.use_holdout_es = false;
+  opts.split_ratio = DEF_SPLIT_RATIO;
   opts.split_save_phylip = false;
+  opts.convergence_iterations = DEF_CONVERGENCE_ITERATIONS;
 
   /* Stopping criteria */
   opts.stopping_rule = 3; // by default, we use the KH-multiple testing as a stopping rule
@@ -1110,25 +1113,39 @@ void CommandLineParser::parse_options(int argc, char** argv, Options &opts)
         break;
       
       case 65: /* Use cross validation approach */
-        opts.use_cv = true;
+        opts.use_holdout_es = true;
         opts.use_pythia = false;
         opts.use_adaptive_search = false;
         opts.modified_version = true;
+        opts.stopping_rule = -1;
+        opts.lh_epsilon = DEF_LH_EPSILON_V11;
+        lh_epsilon_set = true;
         break;
       
-      case 66: /* NNI tolerance */
-        opts.use_cv = true;
+      case 66: /* Holdout split ratio */
+        opts.use_holdout_es = true;
         opts.use_pythia = false;
         opts.use_adaptive_search = false;
         opts.modified_version = true;
-        if(sscanf(optarg, "%lf", &opts.cv_split_ratio) != 1 || 
-          opts.cv_split_ratio <= 0. || opts.cv_split_ratio >= 1.)
+        opts.stopping_rule = -1;
+        opts.lh_epsilon = DEF_LH_EPSILON_V11;
+        lh_epsilon_set = true;
+        if(sscanf(optarg, "%lf", &opts.split_ratio) != 1 || 
+          opts.split_ratio <= 0. || opts.split_ratio >= 1.)
         {
           throw InvalidOptionValueException("Invalid Cross Validation split ratio: " + string(optarg) +
                                             ", please provide a float between 0 and 1!\n");
         }
         break;
-              
+      
+      case 67:  /* spr-radius = maximum radius for fast SPRs */
+        if (sscanf(optarg, "%d", &opts.convergence_iterations) != 1 || opts.convergence_iterations <= 0)
+        {
+          throw InvalidOptionValueException("Invalid convergence iterations: " + string(optarg) +
+                                            ", please provide a positive integer!");
+        }
+        break;
+      
       default:
         throw  OptionException("Internal error in option parsing");
     }

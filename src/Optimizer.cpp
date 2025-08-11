@@ -8,13 +8,16 @@ Optimizer::Optimizer (const Options &opts) :
     _lh_epsilon(opts.lh_epsilon), _lh_epsilon_brlen_triplet(opts.lh_epsilon_brlen_triplet), 
     _spr_radius(opts.spr_radius), _spr_cutoff(opts.spr_cutoff), 
     _nni_epsilon(opts.nni_epsilon), _nni_tolerance(opts.nni_tolerance), 
-    _stopping_criterion(opts.stopping_rule), _modified_version(opts.modified_version), _use_cv(opts.use_cv)
+    _stopping_criterion(opts.stopping_rule), _modified_version(opts.modified_version), 
+    _use_holdout_es(opts.use_holdout_es), _convergence_iters(opts.convergence_iterations), 
+    _best_holdout_es_solution(nullptr), _best_holdout_es_loglh(0.)
 {
 }
 
 Optimizer::~Optimizer ()
 {
   // TODO Auto-generated destructor stub
+  if(_use_holdout_es) corax_utree_graph_destroy(_best_holdout_es_solution, NULL);
 }
 
 double Optimizer::optimize_model(TreeInfo& treeinfo, double lh_epsilon, bool testing_sites)
@@ -46,32 +49,101 @@ double Optimizer::optimize_model(TreeInfo& treeinfo, double lh_epsilon, bool tes
   return new_loglh;
 }
 
+void Optimizer::set_best_holdout_es_solution(const corax_unode_t* root, double testing_loglh)
+{
+  if(_best_holdout_es_solution) corax_utree_graph_destroy(_best_holdout_es_solution, NULL);
+
+  _best_holdout_es_solution = corax_utree_graph_clone(root);
+  _best_holdout_es_loglh =  testing_loglh;
+}
+
+double Optimizer::revert_to_best_solution(TreeInfo& training_treeinfo, 
+                                          TreeInfo* testing_treeinfo,
+                                          double br_len_epsilon,
+                                          double mod_opt_epsilon,
+                                          double &training_loglh,
+                                          double &test_loglh)
+{
+
+  training_treeinfo.copy_tree(_best_holdout_es_solution);
+  testing_treeinfo->copy_tree(_best_holdout_es_solution);
+
+  training_loglh = training_treeinfo.optimize_branches(br_len_epsilon, 1);
+  // skipping modpit for now, lets see;
+
+  test_loglh = testing_treeinfo->optimize_branches(br_len_epsilon, 1, true);
+  test_loglh = optimize_model(*testing_treeinfo, mod_opt_epsilon, true);
+
+  if (fabs(test_loglh - _best_holdout_es_loglh) > 1.)
+  {
+    LOG_DEBUG << "Warning: Different best-testing loglh after reverting: old_logl = " << _best_holdout_es_loglh 
+        << ", updated_loglh = " << test_loglh << endl;
+  }
+  
+  _best_holdout_es_loglh = test_loglh;
+  
+  return test_loglh;
+}
+
 double Optimizer::evaluate_testing_sites(TreeInfo& training_treeinfo, 
                                       TreeInfo* testing_treeinfo, 
                                       double br_len_epsilon,
                                       double mod_opt_epsilon,
                                       bool substitute)
 {
-  assert(testing_treeinfo && _use_cv);
+  assert(testing_treeinfo && _use_holdout_es);
 
-  if(substitute) testing_treeinfo->copy_tree(&training_treeinfo.pll_utree_root());
-  
+  //bool check = ((test_loglh < 0.) && substitute) ;
+  //corax_unode_t *tmp_tree;
+
+  if(substitute)
+  {
+    //if (check) tmp_tree = corax_utree_graph_clone(&testing_treeinfo->pll_utree_root());
+
+    testing_treeinfo->copy_tree(&training_treeinfo.pll_utree_root());
+  }
+
   bool incremental = (testing_treeinfo->branches_optimized() && 
                       testing_treeinfo->mod_params_optimized());
   
-  double test_loglh = testing_treeinfo->loglh(incremental);
+  double new_test_loglh = testing_treeinfo->loglh(incremental);
   
   if(!testing_treeinfo->branches_optimized())
   {
-    test_loglh = testing_treeinfo->optimize_branches(br_len_epsilon, 1, true);
+    new_test_loglh = testing_treeinfo->optimize_branches(br_len_epsilon, 1, true);
   }
 
   if(!testing_treeinfo->mod_params_optimized())
   {
-    test_loglh = optimize_model(*testing_treeinfo, mod_opt_epsilon, true);
+    new_test_loglh = optimize_model(*testing_treeinfo, mod_opt_epsilon, true);
   }
 
-  return test_loglh;
+  //LOG_PROGRESS_HOLDOUT(training_loglh, new_test_loglh) << "Reverting to the pre-SPR round topology" << endl;
+  /*
+  if (check && (new_test_loglh < test_loglh))
+  {
+    training_treeinfo.copy_tree(tmp_tree);
+    testing_treeinfo->copy_tree(tmp_tree);
+
+    training_loglh = training_treeinfo.optimize_branches(br_len_epsilon, 1);
+    // skipping modpit for now, lets see;
+
+    double _updated_test_loglh = testing_treeinfo->optimize_branches(br_len_epsilon, 1, true);
+    _updated_test_loglh = optimize_model(*testing_treeinfo, mod_opt_epsilon, true);
+
+    if (fabs(test_loglh - _updated_test_loglh) > 1.)
+    {
+      cout << "Warning: Different testing loglh after reverting: old_logl = " << test_loglh 
+          << ", updated_loglh = " << _updated_test_loglh << endl;
+    }
+    //_updated_training_loglh = training_treeinfo.optimize_model()
+
+    test_loglh = _updated_test_loglh;
+  }
+  
+  if(check) corax_utree_graph_destroy(tmp_tree, NULL);
+  */
+  return new_test_loglh;
 }
 
 void Optimizer::nni(TreeInfo& treeinfo, nni_round_params& nni_params, double& loglh)
@@ -564,9 +636,9 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   spr_params.lh_epsilon_brlen_triplet = _lh_epsilon_brlen_triplet;
 
   unsigned long int total_moves = 0, increasing_moves = 0;
-  spr_params.total_moves = ((criterion && criterion->multi_test_correction()) || _use_cv) ? 
+  spr_params.total_moves = ((criterion && criterion->multi_test_correction()) || _use_holdout_es) ? 
                             &total_moves : nullptr;
-  spr_params.increasing_moves = ((criterion && criterion->multi_test_correction()) || _use_cv) ? 
+  spr_params.increasing_moves = ((criterion && criterion->multi_test_correction()) || _use_holdout_es) ? 
                             &increasing_moves : nullptr;
   spr_params.intermediate_trees_file = "";
   
@@ -577,6 +649,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   }
 
   double old_test_loglh = 0, test_loglh = 0; // for cross-validation
+  int _tmp_conv_iters = _convergence_iters;
   bool use_kh_like = (criterion) ? criterion->kh_test() : false;
   vector<double *> persite_lnl, persite_lnl_new;
   
@@ -684,13 +757,15 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       ParallelContext::barrier();
     } 
 
-    if(opts.use_cv)
+    if(opts.use_holdout_es)
     {
-      old_test_loglh = evaluate_testing_sites(treeinfo, 
-                                              treeinfo_testing,
-                                              fast_modopt_eps,
-                                              testing_modopt_eps,
-                                              true);
+      test_loglh = evaluate_testing_sites(treeinfo, 
+                                          treeinfo_testing,
+                                          fast_modopt_eps,
+                                          testing_modopt_eps,
+                                          true);
+      
+      set_best_holdout_es_solution(&treeinfo.pll_utree_root(), test_loglh);
     }
   }
 
@@ -710,6 +785,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
 
   double old_loglh, epsilon;
   bool impr = true;
+  bool updated_best_solution = false;
   
   if(_spr_radius > 0){
     best_fast_radius = _spr_radius; // maybe change that idk
@@ -725,22 +801,13 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       cm.update_and_write(treeinfo, parted_msa);
       ++iter;
       old_loglh = loglh;
-
-      if(_use_cv)
-      {
-        old_test_loglh = evaluate_testing_sites(treeinfo, 
-                                              treeinfo_testing,
-                                              fast_modopt_eps,
-                                              testing_modopt_eps,
-                                              false);
-        
-      }
+      old_test_loglh = test_loglh;
 
       if(use_kh_like) 
-        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo, 
+        criterion->compute_loglh(_use_holdout_es ? *treeinfo_testing : treeinfo, 
                                 persite_lnl, true);
 
-      (_use_cv ? LOG_PROGRESS_CV(old_loglh, old_test_loglh) : LOG_PROGRESS(old_loglh)) << 
+      (_use_holdout_es ? LOG_PROGRESS_HOLDOUT(old_loglh, test_loglh) : LOG_PROGRESS(old_loglh)) << 
           (spr_params.thorough ? "SLOW" : "FAST") <<
           " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
     
@@ -750,22 +817,28 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       /* optimize ALL branches */
       loglh = treeinfo.optimize_branches(br_len_epsilon, 1);
 
-      if(_use_cv)
+      if(_use_holdout_es)
       {
         test_loglh = evaluate_testing_sites(treeinfo, 
-                                        treeinfo_testing, 
-                                        fast_modopt_eps,
-                                        testing_modopt_eps,
-                                        (*spr_params.increasing_moves) > 0 ? 
-                                          true : false);
+                                          treeinfo_testing, 
+                                          fast_modopt_eps,
+                                          testing_modopt_eps,
+                                          (*spr_params.increasing_moves) > 0 ? 
+                                            true : false);
+        
+        updated_best_solution = (test_loglh - _best_holdout_es_loglh > -1e-4);
+        
+        if(test_loglh - _best_holdout_es_loglh > 1e-4)
+          set_best_holdout_es_solution(&treeinfo.pll_utree_root(), test_loglh);
+        
       }
 
-      double L_new = _use_cv ? test_loglh : loglh;
-      double L_old = _use_cv ? old_test_loglh : old_loglh;
+      double L_new = _use_holdout_es ? test_loglh : loglh;
+      double L_old = _use_holdout_es ? old_test_loglh : old_loglh;
 
       if(use_kh_like){
         
-        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo,
+        criterion->compute_loglh(_use_holdout_es ? *treeinfo_testing : treeinfo,
                             persite_lnl_new, false);
         
         if(criterion->multi_test_correction()) 
@@ -797,11 +870,24 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
     while (impr);
   }
 
+  if(_use_holdout_es && !updated_best_solution)
+  {
+    LOG_PROGRESS_HOLDOUT(loglh, test_loglh) 
+      << "Reverting to the best holdout-aware topology" << endl;
+    
+    revert_to_best_solution(treeinfo, 
+                            treeinfo_testing,
+                            testing_modopt_eps,
+                            testing_modopt_eps,
+                            loglh,
+                            test_loglh);
+  }
+
   if (do_step(CheckpointStep::modOpt3))
   {
     cm.update_and_write(treeinfo, parted_msa);
     
-    (_use_cv ? LOG_PROGRESS_CV(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
+    (_use_holdout_es ? LOG_PROGRESS_HOLDOUT(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
       "Model parameter optimization (eps = " << interim_modopt_eps << ")" << endl;
     
     loglh = optimize_model(treeinfo, interim_modopt_eps);
@@ -813,6 +899,8 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
     iter = 0;
   }
   
+  updated_best_solution = true;
+
   if (do_step(CheckpointStep::slowSPR))
   {
     do
@@ -822,43 +910,49 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
       cm.update_and_write(treeinfo, parted_msa);
       ++iter;
       old_loglh = loglh;
-
-      if(_use_cv)
-      {
-        old_test_loglh = evaluate_testing_sites(treeinfo, 
-                                              treeinfo_testing,
-                                              fast_modopt_eps,
-                                              testing_modopt_eps,
-                                              false); 
-      }
+      old_test_loglh = _best_holdout_es_loglh;
 
       if(use_kh_like) 
-        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo, 
+        criterion->compute_loglh(_use_holdout_es ? *treeinfo_testing : treeinfo, 
                                 persite_lnl, true);
 
-      (_use_cv ? LOG_PROGRESS_CV(old_loglh, old_test_loglh) : LOG_PROGRESS(old_loglh)) << 
+      (_use_holdout_es ? LOG_PROGRESS_HOLDOUT(old_loglh, test_loglh) : LOG_PROGRESS(old_loglh)) << 
           (spr_params.thorough ? "SLOW" : "FAST") <<
           " spr round " << iter << " (radius: " << spr_params.radius_max << ")" << endl;
     
       loglh = treeinfo.spr_round(spr_params);
       loglh = treeinfo.optimize_branches(br_len_epsilon, 1);
       
-      if(_use_cv)
+      if(_use_holdout_es)
       {
         test_loglh = evaluate_testing_sites(treeinfo, 
-                                        treeinfo_testing, 
-                                        fast_modopt_eps,
-                                        testing_modopt_eps,
-                                        (*spr_params.increasing_moves) > 0 ? 
-                                          true : false);
+                                          treeinfo_testing, 
+                                          fast_modopt_eps,
+                                          testing_modopt_eps,
+                                          (*spr_params.increasing_moves) > 0 ? 
+                                            true : false);
+        
+        updated_best_solution = (test_loglh - _best_holdout_es_loglh > -1e-4);
+        
+        if(test_loglh - _best_holdout_es_loglh > 1e-4)
+          set_best_holdout_es_solution(&treeinfo.pll_utree_root(), test_loglh);
+        
+        if((*spr_params.increasing_moves) == 0) _tmp_conv_iters = 1;
+        
+        // reset if improvement
+        if(((*spr_params.increasing_moves) > 0) && (test_loglh - old_test_loglh > epsilon))
+          _tmp_conv_iters = _convergence_iters;
+        
+        if(ParallelContext::group_master_thread())
+          cout << "Reamining iters " << _tmp_conv_iters << endl;
       }
 
-      double L_new = _use_cv ? test_loglh : loglh;
-      double L_old = _use_cv ? old_test_loglh : old_loglh;
+      double L_old = _use_holdout_es ? old_test_loglh : old_loglh;
+      double L_new = _use_holdout_es ? test_loglh : loglh;
 
       if(use_kh_like){
         
-        criterion->compute_loglh(_use_cv ? *treeinfo_testing : treeinfo,
+        criterion->compute_loglh(_use_holdout_es ? *treeinfo_testing : treeinfo,
                               persite_lnl_new, false);
 
         if(criterion->multi_test_correction()) 
@@ -883,10 +977,23 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
           impr = (L_new - L_old > epsilon);
         }
       } else {
-        impr = (L_new - L_old > epsilon);
+        impr = ((L_new - L_old > epsilon) || ((--_tmp_conv_iters) > 0));
       }
     }
     while (impr);
+  }
+
+  if(_use_holdout_es && !updated_best_solution)
+  {
+    LOG_PROGRESS_HOLDOUT(loglh, test_loglh) 
+      << "Reverting to the best holdout-aware topology" << endl;
+    
+    revert_to_best_solution(treeinfo, 
+                            treeinfo_testing,
+                            testing_modopt_eps,
+                            testing_modopt_eps,
+                            loglh,
+                            test_loglh);
   }
 
   /* Final thorough model optimization */
@@ -894,7 +1001,7 @@ double Optimizer::optimize_topology_modified(TreeInfo& treeinfo, TreeInfo* treei
   {
     cm.update_and_write(treeinfo, parted_msa);
 
-    (_use_cv ? LOG_PROGRESS_CV(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
+    (_use_holdout_es ? LOG_PROGRESS_HOLDOUT(loglh, test_loglh) : LOG_PROGRESS(loglh)) << 
       "Model parameter optimization (eps = " << final_modopt_eps << ")" << endl;
     loglh = optimize_model(treeinfo, final_modopt_eps);
   }

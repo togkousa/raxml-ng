@@ -17,7 +17,8 @@
 
 #define DEF_LH_EPSILON_V11         0.1
 
-#define DEF_CV_SPLIT_RATIO        0.8
+#define DEF_SPLIT_RATIO        0.8
+#define DEF_CONVERGENCE_ITERATIONS  1
 
 #define RAXML_BRLEN_SMOOTHINGS    32
 #define RAXML_BRLEN_DEFAULT       0.1

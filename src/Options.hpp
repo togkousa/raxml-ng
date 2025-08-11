@@ -66,9 +66,10 @@ public:
   bool use_adaptive_search;
   
   /* cross-validation */
-  bool use_cv;
-  double cv_split_ratio;
+  bool use_holdout_es;
+  double split_ratio;
   bool split_save_phylip;
+  int convergence_iterations;
 
   bool optimize_model;
   bool optimize_brlen;
